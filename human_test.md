@@ -17,8 +17,11 @@ The short checklist is in `README.md` ("Test plan"); this file has the details.
 - Find your game folder once: in Steam, right-click Total War: SHOGUN 2 → Manage → Browse local files. Two files
   there matter for reports:
   - `shared_turns.log`: the mod writes one line whenever a shared turn starts or ends, someone presses End
-    Turn, the turn passes on, someone orders an army to move (`MOVE ... accepted` or `MOVE ... refused, reasons ...`),
-    or a battle starts and moves on (`BATTLE ...`), or a desync or resync happens (`DESYNC` / `RESYNC`, only without
+    Turn, the turn passes on, someone orders an army to move (`MOVE ... accepted` or `MOVE ... refused, reasons ...`)
+    or to attack (`ATTACK ...`), a popup or diplomacy screen starts waiting for an answer or is answered (`PENDING push`
+    / `PENDING pop`), a negotiation starts or war is declared (`DIPLOMACY ...`), the game checks whether an army may
+    enter foreign land (`ACCESS ...`), a queued move carries on at the end of the turn (`END_MOVES ...`), or a battle
+    starts and moves on (`BATTLE ...`), or a desync or resync happens (`DESYNC` / `RESYNC`, only without
     the 8-player mod: with it, that mod's own desync handling runs and isn't logged). `CLICK` lines (an order given on the map) appear only on the PC that clicked; every
     other line should be the same on every PC. Each new game start moves the previous log to
     `shared_turns.log.old`, so **copy it before starting the game a second time** after a problem.
@@ -32,6 +35,12 @@ question), that's not a bug. Avoid battles until test 9.
 "The first player" below is the human whose clan comes first in the turn order. In this build it is the only one
 of the group who can still open diplomacy.
 
+Known problems in this build (found in the tests so far; no need to report them again unless something new happens):
+- A player who isn't first attacks another human of the group and declares war in the popup: the turn freezes for
+  everyone. The first player declaring war on another human freezes too. Try it only at the end
+  of a session (test 16).
+- Event messages (agent discovered and the like) of a player who isn't first may pop up during the AI turns (test 17).
+
 For each test, note pass / fail and anything odd, even if it didn't break the game.
 
 | # | Do | Expected |
@@ -42,8 +51,9 @@ For each test, note pass / fail and anything odd, even if it didn't break the ga
 | 2b | The first player moves armies while the others' armies are still walking. | The first player's moves work as before (`MOVE ... kept for <first player's clan>`). Nothing jumps or stops on any PC. |
 | 2c | A player who isn't first orders an army to attack an AI army or settlement (cancel or autoresolve the battle if one starts). | The order is accepted: the army walks up and the attack starts. |
 | 2d | A player who isn't first recruits units in a settlement with an army in it, and into an army standing next to it. | Recruitment works like for the first player. If a card says there's no path, note which. |
-| 2f | A player who isn't first attacks a clan they're at peace with (AI or human) and picks "declare war" in the popup. | Their diplomacy screen opens; after closing it nobody is blocked (`pa=0` again in the log). Note whether the war was really declared. The first player declaring war on another human still freezes in this build: avoid it. |
-| 2g | A player who isn't first recruits units in a settlement with their general standing next to it (outside), the units assigned to that general. | Next turn the units walk out and join the general (the card may still warn on the non-first player's PC: cosmetic). |
+| 2f | A player who isn't first attacks a clan they're at peace with (AI or human) and picks "declare war" in the popup. | Against an AI clan: their diplomacy screen opens; after closing it nobody is blocked (`pa=0` again in the log). Note whether the war was really declared. Against a human it freezes in this build: that's test 16. |
+| 2g | A player who isn't first recruits units in a settlement with their general standing next to it (outside), the units assigned to that general. | Next turn the units appear with an arrow to the general; when the group's turn ends they walk out and join him, before the AI clans move (the card may still warn on the non-first player's PC: cosmetic). The log has `END_MOVES <your clan> resumes an order left from its turn` on every PC. |
+| 2h | A player who isn't first orders an army (and an agent) to a place further than one turn's movement, then everyone ends the turn. | When the group's turn ends, that army and agent continue towards their destination like the first player's do, on every PC (`END_MOVES` lines). |
 | 2e | While others move: does the cursor or the armies' movement feel slower than in the first player's turn? | No noticeable difference. If it's slower, note on which PC and when. |
 | 3 | End turns in this order: the last player, then the middle one, then the first player. | Whoever has ended can't move armies any more; the others keep playing. The AI clans start moving only after the last one has ended. |
 | 4 | Next turn. | All of you start together again. Nobody gets a second turn in the same round; movement is reset once. |
@@ -56,8 +66,11 @@ For each test, note pass / fail and anything odd, even if it didn't break the ga
 | 11 | (Optional) Host saves at the start of a turn, everyone quits, host loads and the others rejoin. | The shared turn starts again for everyone. |
 | 12 | Play 5 or more turns normally. | No "out of sync" popup. |
 | 13 | A player who isn't first leaves an army where a hostile AI army can reach it, ends the turn, and the host saves just before the last player ends (the save from before the AI turns). Repeat over a few turns until the AI attacks it. | That player gets the pre-battle choice (fight, autoresolve, retreat) like in the normal game. The log has `BATTLE new`, `BATTLE pre-battle entry for <clan>` lines and `BATTLE state` steps. If the army is destroyed without a choice: see below. |
-| 15 | On the campaign map the host presses **Ctrl+Shift+F9** (with and without the 8-player mod). | The resync popup appears for everyone and the game carries on afterwards. Without the 8-player mod the log has `RESYNC host pressed Ctrl+Shift+F9` on the host and `RESYNC forced by the host's key` on the others. |
 | 14 | Only with the 8-player co-op mod installed under this one: host with 3 or more players. | The lobby has 8 slots and its kick / invite buttons work; after a battle every player sees the right result; the host's Ctrl+Shift+F9 resyncs. The shared turns work for all allied humans. Anything of the 8-player mod that worked before and doesn't now is a conflict between the two mods: note what. |
+| 15 | On the campaign map the host presses **Ctrl+Shift+F9** (with and without the 8-player mod). | The resync popup appears for everyone and the game carries on afterwards. Without the 8-player mod the log has `RESYNC host pressed Ctrl+Shift+F9` on the host and `RESYNC forced by the host's key` on the others. |
+| 16 | Last, at the end of the session (it freezes in this build): a player who isn't first attacks the first player's army and declares war in the popup. Copy both logs right away. | Note for each PC: which popup or screen appeared, what was clicked, and what each player could still do afterwards (move, End Turn, open menus). The logs should have an `ATTACK ...` line, then `PENDING push` lines and maybe `DIPLOMACY` lines: they show where it stops. If the first player is willing, repeat the other way round in a new session. |
+| 17 | A player who isn't first: after ending your turn, watch for event messages (agent discovered, diplomacy, disasters, ...). | Note each message and when it popped up: right after the shared turn ended, during the AI clans' moves (which clan was moving, if you can see it), or at the start of your next turn. Note the same for the first player, for comparison. |
+| 18 | A player who isn't first gets military access from an AI neighbour (note how: diplomacy screen from the attack popup, or the AI offered it), then moves an army into that land, now and again next turn. Note the time of each try. | The army walks in without asking again. If it asks again or shows a red cross: note the time; the log has two `ACCESS` lines there (whose view of the map the game used). |
 
 ## When something goes wrong
 Note the time, the turn number and the test number first. Then:
@@ -65,7 +78,7 @@ Note the time, the turn number and the test number first. Then:
 | What happens | What to collect |
 |---|---|
 | **The game crashes** (closes or "stopped working") | On that PC, from the game folder: the newest `shogun2_..._crash_....mdmp` (check its time) and `shared_turns.log` (if the game was started again since, `shared_turns.log.old`). If there's no new `.mdmp`: press Win+R, type `eventvwr.msc`, open **Windows Logs → Application**, find the **Application Error** entry at the crash time for `Shogun2.exe`, press Ctrl+C and paste it into a text file. The other players: their `shared_turns.log`. |
-| **The turn gets stuck** (nobody can end, the AI never starts, someone can't move) | Write down who the first player was, who pressed End Turn and in what order, what each player's End Turn button looked like, and whether armies could still move. Copy `shared_turns.log` **from every player** before anything else. Then the host presses **Ctrl+Shift+F9** (resync). Note whether that fixed it; if not, everyone quits and the host loads the newest save. |
+| **The turn gets stuck** (nobody can end, the AI never starts, someone can't move) | Write down who the first player was, who pressed End Turn and in what order, what each player's End Turn button looked like, and whether armies could still move. If it started with an attack or a popup: who attacked whom (AI or human army, at war or at peace, did either side have allies), which popup or screen appeared on which PC, and what was clicked. Copy `shared_turns.log` **from every player** before anything else. Then the host presses **Ctrl+Shift+F9** (resync). Note whether that fixed it; if not, everyone quits and the host loads the newest save. |
 | **"Out of sync" popup** | `shared_turns.log` and the newest files from the game's `logs` folder **from every player**, and what everyone did just before. |
 | **An army won't move** (red cross, or the order is ignored) | Which player (first or not), which army, from where to where, allied or at peace with the land it enters. `shared_turns.log` from every player: the `CLICK` line says what the cursor offered (order type 0 = red cross), the `MOVE` line why the game refused (reason bits are listed in the line). |
 | **An army is attacked or destroyed without the pre-battle choice** (test 13) | Who owned the army, what each player saw (enemy army visible, attack sound, the approach), `shared_turns.log` **from every player** (the `BATTLE` lines) and the host's save from before the AI turns. |

@@ -72,7 +72,10 @@ $hooks = @(
 	@(0x10703F27, 'pf commands'), @(0x1115AB26, 'pf ui hover 1'), @(0x111516B2, 'pf ui hover 2'), @(0x11160272, 'pf ui click 1'),
 	@(0x1114AE22, 'pf ui click 2'), @(0x10883DD0, 'move log'), @(0x11129E27, 'click log 1'), @(0x1115199D, 'click log 2'),
 	@(0x1114174C, 'own action turn'), @(0x105FD550, 'pf turn start'),
-	@(0x106EA3B9, 'battle new 1'), @(0x106EA603, 'battle new 2'), @(0x1057FCA0, 'battle state'), @(0x1088A5DD, 'battle ready'))
+	@(0x106EA3B9, 'battle new 1'), @(0x106EA603, 'battle new 2'), @(0x1057FCA0, 'battle state'), @(0x1088A5DD, 'battle ready'),
+	@(0x106B4088, 'end moves'),
+	@(0x1081A7E0, 'pf built for'), @(0x108746B1, 'access log 1'), @(0x108745E1, 'access log 2'), @(0x105EA330, 'pending push'),
+	@(0x105B60E0, 'pending pop'), @(0x10884342, 'negotiation log'), @(0x108840E2, 'war log'), @(0x1088381B, 'attack log'))
 # the desync fixes: this mod's on the original, the 8-player mod's own (in .s2mp) on top of it
 $desync = @(
 	@(0x100B190C, 'frame fp pin'), @(0x10227D40, 'tick fp pin'), @(0x10EE9A71, 'battle no-kick'), @(0x10EF9A87, 'report no-kick'),
@@ -104,9 +107,9 @@ if ((Hex $loc) -ne '6A 05 E8') { $ok = $false }
 $endTurn = Mem 0x1111E8BF 12
 "end turn faction   : {0}" -f (Hex $endTurn)
 if ((Hex $endTurn) -ne '8B 81 B0 00 00 00 90 90 90 90 90 90') { $ok = $false }
-# the mod's data from 11CB1538 (group state, log flags, pathfinder state; standalone also the resync key dword
-# 11CB15B0): mapped, inside .data, zero
-$need = 0x78; if (-not $on8p) { $need = 0x7C }
+# the mod's data from 11CB1538 (group state, log flags, pathfinder state, the resync key dword 11CB15B0 (standalone
+# only; unused but covered on the 8-player mod), the log's pathfinder dword 11CB15B4): mapped, inside .data, zero
+$need = 0x80
 $dataEnd = [int64]$secs['.data'].Va + $secs['.data'].Size
 $data = Mem 0x11CB1538 $need
 $nonzero = @($data | Where-Object { $_ -ne 0 }).Count

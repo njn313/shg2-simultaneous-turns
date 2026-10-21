@@ -204,7 +204,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.2 (milestone 1, fixes 2-5, battle log, desync fixes)";
+	const string LogBuildTag = "shared turns 0.3 (milestone 1, fixes 2-6, desync fixes, battle / access / pending / diplomacy / attack log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -248,13 +248,25 @@ public static class SharedTurnsPatcher {
 		"!RESYNC started, auto-accepted",                                   // 29
 		"!RESYNC host pressed Ctrl+Shift+F9",                               // 30
 		"!RESYNC forced by the host's key",                                 // 31
+		"END_MOVES %f resumes an order left from its turn",                 // 32
+		"ACCESS %f can't reach its destination with the pathfinder built for %f",   // 33
+		"ACCESS pathfinder kept for %f; reachable if the owner let it through: %b (then the declare war / military access popup)",   // 34
+		"CLICK pathfinder built for %f, kept for %f (this PC only)",       // 35
+		"PENDING push node vtable %d (291491768 move options popup, 291491328 negotiation), another waiting %b",   // 36
+		"PENDING pop node vtable %d, another waiting %b",                   // 37
+		"DIPLOMACY negotiation %f with %f",                                 // 38
+		"DIPLOMACY %f declares war on %f",                                  // 39
+		"ATTACK %f orders an attack on a character of %f: accepted",        // 40
+		"ATTACK %f orders an attack on a character of %f: refused",         // 41
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
 		LogCloseWait = 12, LogClose = 13, LogTurnEnd = 14, LogSkip = 15, LogRound = 16, LogMoveOk = 17,
 		LogMoveRefused = 18, LogClick = 19, LogBattleNew = 20, LogBattleKind = 21, LogBattleEntry = 22,
 		LogBattleState = 23, LogBattleReady = 24, LogDesyncBattle = 25, LogDesyncOther = 26, LogReportHostKick = 27,
-		LogReportLeave = 28, LogResyncAuto = 29, LogResyncKey = 30, LogResyncForced = 31;
+		LogReportLeave = 28, LogResyncAuto = 29, LogResyncKey = 30, LogResyncForced = 31, LogEndMoves = 32,
+		LogAccessBlocked = 33, LogAccessKept = 34, LogClickPf = 35, LogPendingPush = 36, LogPendingPop = 37,
+		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -704,9 +716,12 @@ public static class SharedTurnsPatcher {
 	const uint PfLastDword = GroupVa + 0x74;
 	// GroupVa + 78h: ResyncKeyPrevVa (desync fixes, standalone builds only)
 	const int PfDwords = 0x1C / 4;             // PfFocusVa .. PfLastDword
+	const uint PfBuiltForVa = GroupVa + 0x7C;  // log only: the faction the pathfinder's region flags were last built for
 	const uint FactionTurnStart = 0x105FD090;  // thiscall(faction)
 	const uint FactionTurnEnd = 0x105B2870;    // thiscall(faction)
 	const uint FactionIsDead = 0x105CB900;     // thiscall(faction) -> al
+	const uint FactionResumeOrder = 0x105B73D0;   // thiscall(faction) -> al: one of its characters' orders left from the turn moved on
+	const uint AttackAllowed = 0x106E4F60;     // thiscall(campaign; faction) ret 4 -> al
 	const uint FactionsAtWar = 0x105CB0F0;     // thiscall(faction; other) ret 4 -> al
 	const uint CampaignEndTurn = 0x106A5DA0;   // thiscall(campaign; faction, flag) ret 8
 	const uint CanEndTurn = 0x106E4F20;        // thiscall(campaign; faction) ret 4 -> al
@@ -2025,6 +2040,270 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
+	static uint EmitEndMoves(Asm a, uint pfRestore, uint log) {
+		// replaces "call FUN_105b73d0" at 106B4088 in FUN_106b4070 (phase 2, after the current faction's End Turn; asked
+		// whenever movement is idle until it returns 0): FUN_105b73d0(f) moves on the first of f's characters whose order
+		// is left from the turn ([char+94h], +14h = 1; FUN_108d8f90, which drops the order if the movement manager refuses
+		// it). Vanilla only asks the current faction, so the members' queued moves (multi-turn moves, new units walking
+		// to their general) never ran. After the lead's, each living non-lead member's in slot order, with its ended bit
+		// cleared for the call (all have ended: "closing" GroupAllows would refuse its movers), then the turn's pathfinder
+		// set-up again (the member's order was pathed with its own, PfMoverAct).
+		// entry: ecx = current faction; returns al = 1 while something moved on; keeps ebx, esi, edi, ebp
+		uint at = a.Here;
+		a.Raw(0x53);                                      // push ebx
+		a.Raw(0x56);                                      // push esi
+		a.Raw(0x57);                                      // push edi
+		a.Raw(0x8B, 0xF1);                                // mov esi,ecx             (current)
+		a.Call(FactionResumeOrder);                       // FUN_105b73d0(current) (replaced call)
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J8(0x75, "moved");                              // jnz moved
+		EmitGroupPtr(a, 7, GroupVa);                      // edi = &group
+		a.Raw(0x83, 0x3F, 0x02);                          // cmp dword ptr [edi],2
+		a.J8(0x7C, "none");                               // jl none                 (no group, or the lead alone)
+		a.Raw(0x3B, 0x77, 0x34);                          // cmp esi,[edi+34h]
+		a.J8(0x75, "none");                               // jne none                (not this group's lead)
+		a.Raw(0xBB, 0x01, 0x00, 0x00, 0x00);              // mov ebx,1               (slot)
+		a.Mark("loop");
+		a.Raw(0x8B, 0x4C, 0x9F, 0x34);                    // mov ecx,[edi+ebx*4+34h] (member)
+		a.Call(FactionIsDead);
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J8(0x75, "next");                               // jnz next
+		a.Raw(0xFF, 0x77, 0x04);                          // push dword ptr [edi+4]  (ended)
+		a.Raw(0x0F, 0xB3, 0x5F, 0x04);                    // btr [edi+4],ebx         (acts as if it hadn't ended)
+		a.Raw(0x8B, 0x4C, 0x9F, 0x34);                    // mov ecx,[edi+ebx*4+34h]
+		a.Call(FactionResumeOrder);                       // FUN_105b73d0(member)
+		a.Raw(0x8F, 0x47, 0x04);                          // pop dword ptr [edi+4]
+		a.Raw(0x8B, 0x8E, 0x8C, 0x00, 0x00, 0x00);        // mov ecx,[esi+8Ch]
+		a.Raw(0xFF, 0x71, 0x08);                          // push dword ptr [ecx+8]  (campaign)
+		a.Call(pfRestore);                                // keeps every register and the flags
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J8(0x74, "next");                               // jz next
+		a.Raw(0x6A, 0x00);                                // push 0
+		a.Raw(0xFF, 0x74, 0x9F, 0x34);                    // push dword ptr [edi+ebx*4+34h]
+		CallLog(a, log, LogEndMoves);
+		a.J8(0xEB, "moved");                              // jmp moved
+		a.Mark("next");
+		a.Raw(0x43);                                      // inc ebx
+		a.Raw(0x3B, 0x1F);                                // cmp ebx,[edi]
+		a.J8(0x7C, "loop");                               // jl loop
+		a.Mark("none");
+		a.Raw(0x32, 0xC0);                                // xor al,al
+		a.J8(0xEB, "out");                                // jmp out
+		a.Mark("moved");
+		a.Raw(0xB0, 0x01);                                // mov al,1
+		a.Mark("out");
+		a.Raw(0x5F);                                      // pop edi
+		a.Raw(0x5E);                                      // pop esi
+		a.Raw(0x5B);                                      // pop ebx
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	// ---- log only: pathfinder set-ups at the access decision, pending actions, diplomacy, attacks -----------------
+	// None of these change anything the simulation reads (PfBuiltForVa is read only by the log), so they can't desync.
+
+	// eax = the vtable at [esi] as a static address: the image's runtime base is this code's runtime address minus
+	// its static offset. Changes eax, edx and the flags
+	static void EmitStaticVtable(Asm a) {
+		a.Raw(0xE8, 0x00, 0x00, 0x00, 0x00);              // call $+5
+		uint popAt = a.Here;
+		a.Raw(0x5A);                                      // pop edx
+		a.Raw(0x81, 0xEA); D32(a, popAt - ImageBase);     // sub edx,popAt-ImageBase (runtime image base)
+		a.Raw(0x8B, 0x06);                                // mov eax,[esi]
+		a.Raw(0x2B, 0xC2);                                // sub eax,edx
+		a.Raw(0x05); D32(a, ImageBase);                   // add eax,ImageBase
+	}
+
+	static uint EmitPfBuiltFor(Asm a) {
+		// FUN_1081a7e0(sub; f) (thiscall ret 4: one sub-view's region flags for f, the part of every pathfinder set-up
+		// that decides territory access; called by the faction set-ups FUN_10778500 / FUN_10778890 / FUN_10778f10)
+		// replaces "sub esp,10h / push ebx / mov ebx,ecx" at its entry (6 bytes): remembers f. Unlike [pf+1F4h] this
+		// also follows the engine's temporary set-ups (keep 0)
+		uint at = a.Here;
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0x51);                                      // push ecx
+		EmitGroupPtr(a, 0, PfBuiltForVa);                 // eax = &builtFor
+		a.Raw(0x8B, 0x4C, 0x24, 0x0C);                    // mov ecx,[esp+0Ch]       (f)
+		a.Raw(0x89, 0x08);                                // mov [eax],ecx
+		a.Raw(0x59);                                      // pop ecx
+		a.Raw(0x58);                                      // pop eax
+		a.Raw(0x83, 0xEC, 0x10);                          // sub esp,10h             (replaced)
+		a.Raw(0x53);                                      // push ebx                (replaced)
+		a.Raw(0x8B, 0xD9);                                // mov ebx,ecx             (replaced)
+		a.Jmp(0x1081A7E6);
+		return at;
+	}
+
+	static uint EmitAccessLog(Asm a, uint log) {
+		// replaces "call FUN_107a2bf0" (thiscall(pf; char, dest, FLT_MAX) ret 0Ch -> al) in FUN_10874640 (108746B1) and
+		// its twin FUN_10874570 (108745E1). Reached when a human's character can't reach dest under the pathfinder's
+		// current set-up (FUN_1078fad0); FUN_107a2bf0 tests whether it could if the destination region's owner let it
+		// through, and if so the caller pushes the "declare war / military access" popup. Logs the character's owner,
+		// the faction the region flags were built for, the kept faction [pf+1F4h] and the result.
+		// entry: ecx = pf, three arguments pushed
+		uint at = a.Here;
+		a.Raw(0x51);                                      // push ecx                (pf)
+		a.Raw(0xFF, 0x74, 0x24, 0x10);                    // push dword ptr [esp+10h] (FLT_MAX)
+		a.Raw(0xFF, 0x74, 0x24, 0x10);                    // push dword ptr [esp+10h] (dest)
+		a.Raw(0xFF, 0x74, 0x24, 0x10);                    // push dword ptr [esp+10h] (char)
+		a.Call(0x107A2BF0);                               // the replaced call
+		a.Raw(0x59);                                      // pop ecx
+		a.Raw(0x60);                                      // pushad                  (char at [esp+24h])
+		a.Raw(0x8B, 0xD9);                                // mov ebx,ecx             (pf)
+		a.Raw(0x0F, 0xB6, 0xF0);                          // movzx esi,al            (result)
+		a.Raw(0x8B, 0x4C, 0x24, 0x24);                    // mov ecx,[esp+24h]       (char)
+		a.Raw(0x81, 0xC1, 0x54, 0x02, 0x00, 0x00);        // add ecx,254h
+		a.Call(OwnerOf);                                  // eax = its owner
+		a.Raw(0x8B, 0xF8);                                // mov edi,eax
+		EmitGroupPtr(a, 0, PfBuiltForVa);                 // eax = &builtFor
+		a.Raw(0xFF, 0x30);                                // push dword ptr [eax]
+		a.Raw(0x57);                                      // push edi
+		CallLog(a, log, LogAccessBlocked);
+		a.Raw(0x56);                                      // push esi
+		a.Raw(0xFF, 0xB3, 0xF4, 0x01, 0x00, 0x00);        // push dword ptr [ebx+1F4h] (kept faction)
+		CallLog(a, log, LogAccessKept);
+		a.Raw(0x61);                                      // popad                   (eax = the result)
+		a.Raw(0xC2, 0x0C, 0x00);                          // ret 0Ch
+		return at;
+	}
+
+	static uint EmitClickPfLog(Asm a, uint clickLog, uint log) {
+		// in front of ClickLog where the UI sends an order (11129E27 inside the click order, which runs with the local
+		// member's set-up; 1115199D, the cursor the hover stored): the pathfinder set-up at that moment, this PC only
+		uint at = a.Here;
+		a.Raw(0x60);                                      // pushad
+		EmitGroupPtr(a, 3, UiGlobal);                     // ebx = &ui
+		a.Raw(0x8B, 0x1B);                                // mov ebx,[ebx]
+		a.Raw(0x85, 0xDB);                                // test ebx,ebx
+		a.J8(0x74, "skip");                               // jz skip
+		a.Raw(0x8B, 0x9B, 0x98, 0x0A, 0x00, 0x00);        // mov ebx,[ebx+0A98h]     (model)
+		a.Raw(0x85, 0xDB);                                // test ebx,ebx
+		a.J8(0x74, "skip");                               // jz skip
+		a.Raw(0x8B, 0x5B, 0x08);                          // mov ebx,[ebx+8]         (campaign)
+		a.Raw(0x85, 0xDB);                                // test ebx,ebx
+		a.J8(0x74, "skip");                               // jz skip
+		a.Raw(0x8B, 0x9B, 0xA4, 0x0E, 0x00, 0x00);        // mov ebx,[ebx+0EA4h]     (pathfinder)
+		a.Raw(0x85, 0xDB);                                // test ebx,ebx
+		a.J8(0x74, "skip");                               // jz skip
+		a.Raw(0xFF, 0xB3, 0xF4, 0x01, 0x00, 0x00);        // push dword ptr [ebx+1F4h] (kept faction)
+		EmitGroupPtr(a, 0, PfBuiltForVa);                 // eax = &builtFor
+		a.Raw(0xFF, 0x30);                                // push dword ptr [eax]
+		CallLog(a, log, LogClickPf);
+		a.Mark("skip");
+		a.Raw(0x61);                                      // popad
+		a.Jmp(clickLog);
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitPendingPushLog(Asm a, uint log) {
+		// FUN_105ea330(holder; node) (thiscall ret 4: pushes a pending action onto [campaign+14A8h], see "Pending
+		// actions") replaces "push esi / mov esi,ecx / mov ecx,[esp+8]" at its entry (7 bytes): logs the node's vtable
+		// and whether another action was already waiting
+		uint at = a.Here;
+		a.Raw(0x60);                                      // pushad                  (node at [esp+24h], ecx = holder)
+		a.Raw(0x8B, 0x74, 0x24, 0x24);                    // mov esi,[esp+24h]
+		a.Raw(0x85, 0xF6);                                // test esi,esi
+		a.J8(0x74, "skip");                               // jz skip
+		a.Raw(0x33, 0xC0);                                // xor eax,eax
+		a.Raw(0x83, 0x39, 0x00);                          // cmp dword ptr [ecx],0   (head)
+		a.Raw(0x0F, 0x95, 0xC0);                          // setne al
+		a.Raw(0x50);                                      // push eax
+		EmitStaticVtable(a);                              // eax = node's vtable
+		a.Raw(0x50);                                      // push eax
+		CallLog(a, log, LogPendingPush);
+		a.Mark("skip");
+		a.Raw(0x61);                                      // popad
+		a.Raw(0x56);                                      // push esi                (replaced)
+		a.Raw(0x8B, 0xF1);                                // mov esi,ecx             (replaced)
+		a.Raw(0x8B, 0x4C, 0x24, 0x08);                    // mov ecx,[esp+8]         (replaced)
+		a.Jmp(0x105EA337);
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitPendingPopLog(Asm a, uint log) {
+		// FUN_105b60e0(holder) (thiscall: pops the head pending action, applies and deletes it; from
+		// CCQ_FINALISE_PENDING_ACTION, the agent / ally-war answers and the per-tick countdown) replaces "push esi /
+		// mov esi,ecx / push edi / mov edi,[esi]" at its entry (6 bytes): logs the head's vtable and whether another
+		// action waits behind it
+		uint at = a.Here;
+		a.Raw(0x60);                                      // pushad                  (ecx = holder)
+		a.Raw(0x8B, 0x31);                                // mov esi,[ecx]           (head)
+		a.Raw(0x85, 0xF6);                                // test esi,esi
+		a.J8(0x74, "skip");                               // jz skip
+		a.Raw(0x33, 0xC0);                                // xor eax,eax
+		a.Raw(0x83, 0x7E, 0x04, 0x00);                    // cmp dword ptr [esi+4],0 (next)
+		a.Raw(0x0F, 0x95, 0xC0);                          // setne al
+		a.Raw(0x50);                                      // push eax
+		EmitStaticVtable(a);                              // eax = head's vtable
+		a.Raw(0x50);                                      // push eax
+		CallLog(a, log, LogPendingPop);
+		a.Mark("skip");
+		a.Raw(0x61);                                      // popad
+		a.Raw(0x56);                                      // push esi                (replaced)
+		a.Raw(0x8B, 0xF1);                                // mov esi,ecx             (replaced)
+		a.Raw(0x57);                                      // push edi                (replaced)
+		a.Raw(0x8B, 0x3E);                                // mov edi,[esi]           (replaced)
+		a.Jmp(0x105B60E6);
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitNegotiationLog(Asm a, uint log) {
+		// replaces "call FUN_10692d90" (thiscall(campaign; f1, f2, 1) ret 0Ch) at 10884342 in
+		// CCQ_DIPLOMACY_BEGIN_NEGOTIATION FUN_108842f0
+		uint at = a.Here;
+		a.Raw(0xFF, 0x74, 0x24, 0x08);                    // push dword ptr [esp+8]  (f2)
+		a.Raw(0xFF, 0x74, 0x24, 0x08);                    // push dword ptr [esp+8]  (f1)
+		CallLog(a, log, LogNegotiation);
+		a.Jmp(0x10692D90);
+		return at;
+	}
+
+	static uint EmitWarLog(Asm a, uint log) {
+		// replaces "call FUN_107a4bd0" ([f1+53Ch]; f2, 1, 1) at 108840E2 in CCQ_DECLARE_WAR FUN_10883fc0, where
+		// ebp = f1 and ebx = f2 (loaded at 10884001 / 1088400D, read again after the call)
+		uint at = a.Here;
+		a.Raw(0x53);                                      // push ebx                (f2)
+		a.Raw(0x55);                                      // push ebp                (f1)
+		CallLog(a, log, LogWar);
+		a.Jmp(0x107A4BD0);
+		return at;
+	}
+
+	static uint EmitAttackLog(Asm a, uint log) {
+		// replaces "call FUN_106e4f60" (the attack gate, thiscall(campaign; f) ret 4 -> al; NeqCurF sits inside it at
+		// 106E4F73) at 1088381B in CCQ_CHARACTER_ATTACK FUN_10883780, which then hands the attack to the movement manager
+		// (FUN_1085a820). Both clans are taken from the characters, not from the command's faction argument: esi = the
+		// attacking character, the handler's [esp+8] = the target character (checked non-zero before the call).
+		// entry: ecx = campaign, f pushed; the target is at [esp+10h]
+		uint at = a.Here;
+		a.Raw(0xFF, 0x74, 0x24, 0x04);                    // push dword ptr [esp+4]  (f)
+		a.Call(AttackAllowed);                            // the replaced call
+		a.Raw(0x60);                                      // pushad                  (target at [esp+30h])
+		a.Raw(0x0F, 0xB6, 0xF8);                          // movzx edi,al            (result)
+		a.Raw(0x8B, 0x4C, 0x24, 0x30);                    // mov ecx,[esp+30h]       (target)
+		a.Raw(0x81, 0xC1, 0x54, 0x02, 0x00, 0x00);        // add ecx,254h
+		a.Call(OwnerOf);                                  // eax = the target's owner
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0x8D, 0x8E, 0x54, 0x02, 0x00, 0x00);        // lea ecx,[esi+254h]      (attacker)
+		a.Call(OwnerOf);                                  // eax = the attacker's owner
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0x85, 0xFF);                                // test edi,edi
+		a.J8(0x74, "refused");                            // jz refused
+		CallLog(a, log, LogAttackOk);
+		a.J8(0xEB, "done");                               // jmp done
+		a.Mark("refused");
+		CallLog(a, log, LogAttackRefused);
+		a.Mark("done");
+		a.Raw(0x61);                                      // popad                   (al = the result)
+		a.Raw(0xC2, 0x04, 0x00);                          // ret 4
+		a.Resolve();
+		return at;
+	}
+
 	static void ApplyGroupTurns(Asm s, uint log) {
 		ReserveDataDword(GroupLastDword);
 		ReserveDataDword(LogOpenedVa);
@@ -2125,9 +2404,7 @@ public static class SharedTurnsPatcher {
 		RedirectCall(0x1114AE22, 0x11129A30, uiPfClick);
 		// log only: MOVE in CCQ_CHARACTER_LOCOMOTE_TO, CLICK where the UI sends an order
 		RedirectCall(0x10883DD0, 0x10903190, Sym("MoveLog", EmitMoveLog(s, groupAllows, log)));
-		uint clickLog = Sym("ClickLog", EmitClickLog(s, log));
-		RedirectCall(0x11129E27, 0x111943E0, clickLog);
-		RedirectCall(0x1115199D, 0x111943E0, clickLog);
+		uint clickLog = Sym("ClickLog", EmitClickLog(s, log));   // its two call sites are at the end (ClickPfLog)
 
 		// Fix 4: Lua IsPlayersTurn is also true for a member whose own popup / negotiation is the pending action, so
 		// declaring war from the attack popup opens its diplomacy panel and the panel releases the pending action
@@ -2147,6 +2424,29 @@ public static class SharedTurnsPatcher {
 		ExpectBytes(0x1057FCA0, 0x8B, 0x44, 0x24, 0x04, 0x56, 0x8B, 0xF1);
 		PutJmp(0x1057FCA0, Sym("BattleStateLog", EmitBattleStateLog(s, log)), 5);
 		RedirectCall(0x1088A5DD, 0x106FE6C0, Sym("BattleReadyLog", EmitBattleReadyLog(s, log)));
+
+		// Fix 6: the members' orders left from the turn (queued moves) move on during the lead's end of turn, as vanilla
+		// does for the current faction's
+		RedirectCall(0x106B4088, FactionResumeOrder, Sym("EndMoves", EmitEndMoves(s, pfRestore, log)));
+
+		// Log only: which set-up the pathfinder had when a member was asked for military access it already had, and
+		// where a war declaration between humans stalls (pending actions, negotiations, wars, attack orders)
+		ReserveDataDword(PfBuiltForVa);
+		ExpectBytes(0x1081A7E0, 0x83, 0xEC, 0x10, 0x53, 0x8B, 0xD9);
+		PutJmp(0x1081A7E0, Sym("PfBuiltFor", EmitPfBuiltFor(s)), 6);
+		uint accessLog = Sym("AccessLog", EmitAccessLog(s, log));
+		RedirectCall(0x108746B1, 0x107A2BF0, accessLog);
+		RedirectCall(0x108745E1, 0x107A2BF0, accessLog);
+		uint clickPfLog = Sym("ClickPfLog", EmitClickPfLog(s, clickLog, log));
+		RedirectCall(0x11129E27, 0x111943E0, clickPfLog);
+		RedirectCall(0x1115199D, 0x111943E0, clickPfLog);
+		ExpectBytes(0x105EA330, 0x56, 0x8B, 0xF1, 0x8B, 0x4C, 0x24, 0x08);
+		PutJmp(0x105EA330, Sym("PendingPushLog", EmitPendingPushLog(s, log)), 7);
+		ExpectBytes(0x105B60E0, 0x56, 0x8B, 0xF1, 0x57, 0x8B, 0x3E);
+		PutJmp(0x105B60E0, Sym("PendingPopLog", EmitPendingPopLog(s, log)), 6);
+		RedirectCall(0x10884342, 0x10692D90, Sym("NegotiationLog", EmitNegotiationLog(s, log)));
+		RedirectCall(0x108840E2, 0x107A4BD0, Sym("WarLog", EmitWarLog(s, log)));
+		RedirectCall(0x1088381B, AttackAllowed, Sym("AttackLog", EmitAttackLog(s, log)));
 	}
 
 	// ---- desync fixes (standalone builds only) -------------------------------------------------------------------

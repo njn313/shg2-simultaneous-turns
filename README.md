@@ -10,13 +10,13 @@ the 8-player mod installed, that mod's own versions are used.
 ## What it does
 | | |
 |---|---|
-| **Shared turns (experimental)** | Human players who are not at war with each other play their turns **at the same time**. Pressing End Turn only ends your own part: the AI clans move once the last of you has ended (or the turn timer runs out). A human at war with another human still plays alone. For now, during a shared turn only the first player of the group can open diplomacy, recruit agents, use the clan button or disband units; the others can move, attack, build, recruit and end their turn. Each player's armies find their way with their own clan's view of the map (fog of war, wars, right of passage). Any player of the group can declare war from the attack popup (it opens their diplomacy screen). Battles during a shared turn are untested. |
+| **Shared turns (experimental)** | Human players who are not at war with each other play their turns **at the same time**. Pressing End Turn only ends your own part: the AI clans move once the last of you has ended (or the turn timer runs out). A human at war with another human still plays alone. For now, during a shared turn only the first player of the group can open diplomacy, recruit agents, use the clan button or disband units; the others can move, attack, build, recruit and end their turn. Each player's armies find their way with their own clan's view of the map (fog of war, wars, right of passage), and moves longer than one turn (and new units walking to their general) carry on when the shared turn ends, for every player. Any player of the group can declare war on an AI clan from the attack popup (it opens their diplomacy screen). When the AI attacks a player's army, that player gets the pre-battle choice as usual. Battles started by a player during a shared turn are untested. |
 | **Desync: save screen bug** | Opening the Save or Load screen switched that PC's maths and text rules to its Windows language for the rest of the session (e.g. decimal comma on German, Czech, French or Russian Windows), so it no longer matched the other players. Fixed: those screens now only change how dates are shown. |
 | **Desync: floating-point drift** | The game never locked the CPU's floating-point settings, so anything that changed them on one PC (overlays, anti-virus, drivers, alt-tabbing) made that PC calculate slightly differently. Fixed: the settings are reset to the game's defaults every frame and every battle tick. |
 | **Desync recovery** | If a campaign still goes out of sync, the resync starts by itself instead of waiting for someone to press OK (Cancel used to drop the player). |
 | **Host resync key: Ctrl+Shift+F9** | If the campaign looks wrong or is stuck (one PC stuck on an AI's turn while another shows a player's turn, armies in different places), the **host** presses **Ctrl+Shift+F9** on the campaign map. Everyone gets the host's copy of the campaign, the same way a detected desync is fixed. Wait for the resync popup to finish. It does nothing in battles or the menus, and nothing if a client presses it. |
 | **Battle desync: no more kick** | A battle can't be resynced, so the game used to drop the out-of-sync player. Now the battle carries on for everyone. The out-of-sync player's view may drift (a unit alive on their screen that is dead for others). Back on the campaign map, the host's state is copied to everyone by the campaign resync. |
-| **Diagnostics log** | The game writes `shared_turns.log` into the game folder: one line whenever a shared turn starts or ends, someone presses End Turn, the turn passes on, a player orders an army to move (and whether the game accepted it), and for battles: who attacks whom, who gets the pre-battle choice, who answered it, and each step until the battle is over, and desyncs and resyncs (without the 8-player mod). Clicks on the map are logged only on the PC that clicked. Each game start keeps the previous one as `shared_turns.log.old`. It only records what happens; it changes nothing in the game. Send it along with any problem report. |
+| **Diagnostics log** | The game writes `shared_turns.log` into the game folder: one line whenever a shared turn starts or ends, someone presses End Turn, the turn passes on, a player orders an army to move or attack (and whether the game accepted it), a popup or diplomacy screen waits for a player's answer and is answered, a negotiation starts, war is declared, the game checks whether an army may enter foreign land, and for battles: who attacks whom, who gets the pre-battle choice, who answered it, and each step until the battle is over, and desyncs and resyncs (without the 8-player mod). Clicks on the map are logged only on the PC that clicked. Each game start keeps the previous one as `shared_turns.log.old`. It only records what happens; it changes nothing in the game. Send it along with any problem report. |
 
 ## Install / uninstall
 1. Everyone closes Shogun 2.
@@ -38,8 +38,8 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game | `7892B036A66CD9100DB66B9CC5407849FB17F7A161B82687C69F17837CBFB258` |
-| the 8-player co-op mod v1.4 | `23C6F4CEF2466DAC1EFD3CCC2940B9E4CB9A41639CD9BD4EC94BB13E9B6B2E46` |
+| the original game | `5A343D3E7C19FDD2113177704D8B3E91C1D83BE986728F1C50A73939D6A689C1` |
+| the 8-player co-op mod v1.4 | `72829BE42423291DF0EA5111C098DBFFDE912C523DD5D8068F5D732A750EC71D` |
 
 So either everyone has the 8-player mod, or nobody does.
 
@@ -62,7 +62,9 @@ The tests for the current build, and what to send back when one fails, are in **
 - Not handled yet during a shared turn: diplomacy, agent recruitment, the clan button and disbanding for every player
   of the group, battles while others keep moving, saving and loading in the middle of a shared turn (whoever had
   already ended must end again), revolutions in the regions of anyone but the group's first player.
-- The first player declaring war on another human of the group from the attack popup freezes the turn.
+- Declaring war on another human of the group from the attack popup freezes the turn for everyone (whoever does it).
+- For players who aren't first, event messages may pop up during the AI clans' turns instead of at the start of
+  their next turn.
 - Only the first player can skip army movement with the Space bar.
 
 ## Files
