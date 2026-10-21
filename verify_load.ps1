@@ -70,7 +70,7 @@ $hooks = @(
 	@(0x1069867B, 'disband allowed'), @(0x1111E84F, 'end turn ui'), @(0x11155403, 'turn time up'), @(0x1118C09F, 'order cursor'),
 	@(0x106AA710, 'pf mover acts'), @(0x10900082, 'pf stop reissue'), @(0x10900137, 'pf moves done'), @(0x108D2699, 'pf command done'),
 	@(0x10703F27, 'pf commands'), @(0x1115AB26, 'pf ui hover 1'), @(0x111516B2, 'pf ui hover 2'), @(0x11160272, 'pf ui click 1'),
-	@(0x1114AE22, 'pf ui click 2'), @(0x10883DD0, 'move log'), @(0x11129E27, 'click log 1'), @(0x1115199D, 'click log 2'),
+	@(0x1114AE22, 'pf ui click 2'), @(0x112517A5, 'pf ui recruit panel'), @(0x11232FB1, 'pf ui card state'), @(0x10883DD0, 'move log'), @(0x11129E27, 'click log 1'), @(0x1115199D, 'click log 2'),
 	@(0x1114174C, 'own action turn'), @(0x105FD550, 'pf turn start'),
 	@(0x106EA3B9, 'battle new 1'), @(0x106EA603, 'battle new 2'), @(0x1057FCA0, 'battle state'), @(0x1088A5DD, 'battle ready'),
 	@(0x106B4088, 'end moves'),

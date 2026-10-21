@@ -204,7 +204,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.7 (milestone 1, fixes 2-6, 4b and 6b, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message log)";
+	const string LogBuildTag = "shared turns 0.8 (milestone 1, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -1746,6 +1746,32 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
+	static uint EmitUiPfRecruitPanel(Asm a, uint enter, uint leave) {
+		// FUN_112517a0 (thiscall(panel; 1 dword) ret 4; a vtable method, slot at 11729A68: the recruitment panel's
+		// refresh) asks its provider [this+14h] (vt+0..+1Ch) for the recruitable units and the queue, then fills the cards
+		// (FUN_112478a0 -> FUN_112441e0 -> FUN_11248200: reason [card+74h] = info+30h, active = info+18h == 0; reason 8 of
+		// the table FUN_11241150 is `no_path_available`). Those path tests ran with the lead's kept set-up on a member's
+		// PC, so its cards said the units couldn't reach a general outside the settlement (the turn start, fix 5, places
+		// them correctly). The whole refresh now runs between UiPfEnter and UiPfLeave. Its first instruction is relocated
+		// (mov eax,[11AE5974]), so 112517A5, right after it, jumps here and the rest runs as a sub-call.
+		// entry: ecx = panel, eax = [11AE5974], [esp] = return address, [esp+4] = the argument; flags dead (sub esp
+		// follows)
+		uint body = a.Here;
+		a.Raw(0x83, 0xEC, 0x4C);                          // sub esp,4Ch             (replaced)
+		a.Raw(0x53);                                      // push ebx                (replaced)
+		a.Raw(0x55);                                      // push ebp                (replaced)
+		a.Raw(0x8B, 0xE9);                                // mov ebp,ecx             (replaced)
+		a.Raw(0x56);                                      // push esi                (replaced)
+		a.Jmp(0x112517AD);                                // the rest of FUN_112517a0 (its ret 4 comes back below)
+		uint at = a.Here;
+		a.Call(enter);                                    // keeps every register and the flags
+		a.Raw(0xFF, 0x74, 0x24, 0x04);                    // push dword ptr [esp+4]  (the argument again)
+		a.Call(body);
+		a.Call(leave);                                    // keeps eax
+		a.Raw(0xC2, 0x04, 0x00);                          // ret 4
+		return at;
+	}
+
 	static uint EmitMoveLog(Asm a, uint groupAllows, uint log) {
 		// replaces "call FUN_10903190" in CCQ_CHARACTER_LOCOMOTE_TO FUN_10883d30 (10883DD0), same contract
 		// (thiscall(movement manager; order, destination, 0, 0) ret 10h): runs the order, then for a human owner logs
@@ -2504,6 +2530,11 @@ public static class SharedTurnsPatcher {
 		uint uiPfClick = Sym("UiPfClick", EmitUiPfWrap(s, 0x11129A30, 3, uiPfEnter, uiPfLeave));
 		RedirectCall(0x11160272, 0x11129A30, uiPfClick);
 		RedirectCall(0x1114AE22, 0x11129A30, uiPfClick);
+		// UI: the recruitment panel's refresh FUN_112517a0 (unit cards, their reasons, the queue) and the unit card's
+		// own recruitable test in its animation (FUN_11232c00 -> FUN_107ea880) with the local member's set-up too
+		ExpectBytes(0x112517A5, 0x83, 0xEC, 0x4C, 0x53, 0x55, 0x8B, 0xE9, 0x56);
+		PutJmp(0x112517A5, Sym("UiPfRecruit", EmitUiPfRecruitPanel(s, uiPfEnter, uiPfLeave)), 8);
+		RedirectCall(0x11232FB1, 0x107EA880, Sym("UiPfCardState", EmitUiPfWrap(s, 0x107EA880, 0, uiPfEnter, uiPfLeave)));
 		// log only: MOVE in CCQ_CHARACTER_LOCOMOTE_TO, CLICK where the UI sends an order
 		RedirectCall(0x10883DD0, 0x10903190, Sym("MoveLog", EmitMoveLog(s, groupAllows, log)));
 		uint clickLog = Sym("ClickLog", EmitClickLog(s, log));   // its two call sites are at the end (ClickPfLog)
