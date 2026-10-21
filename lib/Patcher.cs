@@ -204,7 +204,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.4 (milestone 1, fixes 2-6, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack log)";
+	const string LogBuildTag = "shared turns 0.5 (milestone 1, fixes 2-6 and 4b, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -252,7 +252,7 @@ public static class SharedTurnsPatcher {
 		"ACCESS %f can't reach its destination with the pathfinder built for %f",   // 33
 		"ACCESS pathfinder kept for %f; reachable if the owner let it through: %b (then the declare war / military access popup)",   // 34
 		"CLICK pathfinder built for %f, kept for %f (this PC only)",       // 35
-		"PENDING push node vtable %d (291491768 move options popup, 291491328 negotiation), another waiting %b",   // 36
+		"PENDING push node vtable %d (291491768 move options popup, 291491884 attack popup, 291491328 negotiation), another waiting %b",   // 36
 		"PENDING pop node vtable %d, another waiting %b",                   // 37
 		"DIPLOMACY negotiation %f with %f",                                 // 38
 		"DIPLOMACY %f declares war on %f",                                  // 39
@@ -1892,8 +1892,11 @@ public static class SharedTurnsPatcher {
 		// ToggleDiplomacyPopup, which opens the diplomacy panel only if IsPlayersTurn, and the panel's exit finalises
 		// the pending action. Without the panel the Lua stops on a nil panel and the pending action blocks everyone
 		// (fix 4, third in-game test). True as vanilla for local == current; also for a group member that hasn't ended
-		// while the head pending action is its own: a move-options node (vtable 115FCFB8, +8 = the order's character)
-		// of its character, or a negotiation node (vtable 115FCE00, +8 = the faction negotiating) it opened.
+		// while the head pending action is its own: a node whose activation shows the move-options popup for its
+		// character at +8 (FUN_11153910 opens it on the PC whose clan owns that character): move options 115FCFB8 (a
+		// move into a clan at peace), the attack node 115FD02C (CCQ_CHARACTER_ATTACK on a character: FUN_105f2d60,
+		// fix 4b), its siblings 115FD488 / 115FD4F4 (FUN_105f2f60 / FUN_105f3060, same channel [campaign+3C0h]); or a
+		// negotiation node (vtable 115FCE00, +8 = the faction negotiating) it opened.
 		// entry: eax = local faction, ecx = world, esi = ui, edi = Lua state (kept); eax, ecx, edx and the flags are
 		// dead (11141755 pushes ecx as the result)
 		uint at = a.Here;
@@ -1925,9 +1928,17 @@ public static class SharedTurnsPatcher {
 		a.J8(0xEB, "no");                                 // jmp no
 		a.Mark("notneg");
 		a.Raw(0x05); D32(a, 0x115FCFB8u - 0x115FCE00u);   // add eax, move-options vtable - negotiation vtable
-		a.Raw(0x39, 0x01);                                // cmp [ecx],eax
+		a.Raw(0xF7, 0xD8);                                // neg eax
+		a.Raw(0x03, 0x01);                                // add eax,[ecx]           (head's vtable - move-options vtable)
+		a.J8(0x74, "popup");                              // je popup
+		a.Raw(0x83, 0xF8, (byte)(0x115FD02Cu - 0x115FCFB8u));   // cmp eax,74h        (attack on a character)
+		a.J8(0x74, "popup");                              // je popup
+		a.Raw(0x3D); D32(a, 0x115FD488u - 0x115FCFB8u);   // cmp eax,4D0h            (the character node 115FD488)
+		a.J8(0x74, "popup");                              // je popup
+		a.Raw(0x3D); D32(a, 0x115FD4F4u - 0x115FCFB8u);   // cmp eax,53Ch            (the object node 115FD4F4)
 		a.J8(0x75, "no");                                 // jne no
-		a.Raw(0x8B, 0x49, 0x08);                          // mov ecx,[ecx+8]         (the order's character)
+		a.Mark("popup");
+		a.Raw(0x8B, 0x49, 0x08);                          // mov ecx,[ecx+8]         (the acting character)
 		a.Raw(0x85, 0xC9);                                // test ecx,ecx
 		a.J8(0x74, "no");                                 // jz no
 		a.Raw(0x52);                                      // push edx
