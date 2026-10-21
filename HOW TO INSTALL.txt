@@ -1,0 +1,60 @@
+Shogun 2 Shared Turns - TEST BUILD (shared turns + diagnostics log)
+=====================================================================
+
+This zip contains NO game files. The installer builds the mod from your own copy of
+Total War: SHOGUN 2 (current Steam version) and changes one file in your game folder:
+empire.retail.dll (the file it changed is kept as empire.retail.dll.sharedturns-base).
+
+It works on its own (2 players) and together with the 8-player co-op mod v1.4.
+
+
+BEFORE YOU START
+----------------
+- Use a SPARE Steam account if you can. Shogun 2 multiplayer is VAC-protected and this
+  mod changes the game's engine DLL.
+- Everyone in the game must install this SAME zip. Different builds can't play together.
+- Either EVERYONE uses the 8-player co-op mod, or NOBODY does.
+- Turn off all other mods.
+
+
+INSTALL
+-------
+1. Close Shogun 2 completely.
+2. If you play with the 8-player co-op mod: install that one FIRST.
+3. Unzip this file anywhere (e.g. your Desktop). Keep all files together in their folder.
+4. Double-click  Install.bat
+   - If Windows says "Windows protected your PC": click "More info", then "Run anyway".
+   - The installer finds the game in your Steam libraries by itself. If it can't, open
+     PowerShell in this folder and run:
+       powershell -ExecutionPolicy Bypass -File install.ps1 -GamePath "D:\...\Total War SHOGUN 2"
+5. At the end it prints the SHA-256 hash of empire.retail.dll. Compare it with the host.
+   For this build it must start with:
+     17E179AE   (without the 8-player mod)
+     353C6907   (with the 8-player co-op mod v1.4)
+6. Start Shogun 2 from Steam as usual and join or host a multiplayer campaign.
+
+If you had an older version of this mod installed, just run Install.bat again: it
+replaces the old version.
+
+If Steam updates the game, you use "Verify integrity of game files", or you reinstall or
+uninstall the 8-player mod, this mod is gone: run Install.bat again.
+
+To add the 8-player mod later: run Uninstall.bat, install the 8-player mod, then run
+Install.bat again.
+
+
+UNINSTALL
+---------
+Close the game and double-click  Uninstall.bat
+It puts back the file it changed (the original game, or the 8-player mod).
+
+
+TESTING
+-------
+What to test and what to send back is in  human_test.md  (open it with Notepad).
+Short version: when something goes wrong, note the time and turn number, then copy from
+your game folder (Steam: right-click SHOGUN 2 > Manage > Browse local files):
+  - shared_turns.log      (the mod's log; the previous game start is in .log.old)
+  - the newest shogun2_..._crash_....mdmp   (only if the game crashed)
+Copy them BEFORE starting the game twice more, or the log is replaced.
+Send them to the host / whoever collects the results, with a short description.
