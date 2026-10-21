@@ -79,3 +79,11 @@ The tests for the current build, and what to send back when one fails, are in **
 The zip contains no game files: the installer builds the mod from your own copy of the game.
 
 The desync fixes were found by Tasman Modding for the 8-player co-op mod.
+
+## License
+MIT, see [LICENSE](LICENSE). It covers this repository's own files (the installer, the patcher, the scripts and the
+notes) in every version, including the commits made before the license was added. It covers no game files: none
+are included, and you need your own copy of the game.
+
+Not affiliated with or endorsed by SEGA or Creative Assembly. Total War and Total War: SHOGUN 2 are trademarks of
+their owners.
