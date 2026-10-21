@@ -18,12 +18,12 @@ The short checklist is in `README.md` ("Test plan"); this file has the details.
   there matter for reports:
   - `shared_turns.log`: the mod writes one line whenever a shared turn starts or ends, someone presses End
     Turn, the turn passes on, someone orders an army to move (`MOVE ... accepted` or `MOVE ... refused, reasons ...`)
-    or to attack (`ATTACK ...`), a popup or diplomacy screen starts waiting for an answer or is answered (`PENDING push`
+    or to attack (`ATTACK ...`), an event message reaches the screen (`MESSAGE ...`), a popup or diplomacy screen starts waiting for an answer or is answered (`PENDING push`
     / `PENDING pop`), a negotiation starts or war is declared (`DIPLOMACY ...`), the game checks whether an army may
     enter foreign land (`ACCESS ...`), a queued move carries on at the end of the turn (`END_MOVES ...`), or a battle
     starts and moves on (`BATTLE ...`), or a desync or resync happens (`DESYNC` / `RESYNC`, only without
-    the 8-player mod: with it, that mod's own desync handling runs and isn't logged). `CLICK` lines (an order given on the map) appear only on the PC that clicked; every
-    other line should be the same on every PC. Each new game start moves the previous log to
+    the 8-player mod: with it, that mod's own desync handling runs and isn't logged). `CLICK` lines (an order given on the map) appear only on the PC that clicked and `MESSAGE` lines
+    may differ between PCs; every other line should be the same on every PC. Each new game start moves the previous log to
     `shared_turns.log.old`, so **copy it before starting the game a second time** after a problem.
   - `shogun2_..._crash_....mdmp`: the game writes one when it crashes. Only the newest one matters.
 
@@ -66,7 +66,7 @@ For each test, note pass / fail and anything odd, even if it didn't break the ga
 | 14 | Only with the 8-player co-op mod installed under this one: host with 3 or more players. | The lobby has 8 slots and its kick / invite buttons work; after a battle every player sees the right result; the host's Ctrl+Shift+F9 resyncs. The shared turns work for all allied humans. Anything of the 8-player mod that worked before and doesn't now is a conflict between the two mods: note what. |
 | 15 | On the campaign map, during a shared turn, the host presses **Ctrl+Shift+F9** (with and without the 8-player mod). | The resync popup appears for everyone and the game carries on afterwards; everyone can still move (the log has `LOAD a save made during a turn ...` and `START group ...` after the resync; whoever had ended ends again). Without the 8-player mod the log has `RESYNC host pressed Ctrl+Shift+F9` on the host and `RESYNC forced by the host's key` on the others. |
 | 16 | A player who isn't first attacks the first player's army (right-click on it) and declares war in the popup; in another turn the other way round. (It froze before build 0.5; passed in 0.5.) Copy both logs right away. | Note for each PC: which popup or screen appeared, what was clicked, and what each player could still do afterwards (move, End Turn, open menus). The logs should have an `ATTACK ...` line, then `PENDING push` lines and maybe `DIPLOMACY` lines: they show where it stops. If the first player is willing, repeat the other way round in a new session. |
-| 17 | A player who isn't first: after ending your turn, watch for event messages (agent discovered, diplomacy, disasters, ...). | Note each message and when it popped up: right after the shared turn ended, during the AI clans' moves (which clan was moving, if you can see it), or at the start of your next turn. Note the same for the first player, for comparison. |
+| 17 | A player who isn't first: after ending your turn, watch for event messages (agent discovered, diplomacy, disasters, ...). | Note each message and when it popped up: right after the shared turn ended, during the AI clans' moves (which clan was moving, if you can see it), or at the start of your next turn. Note the same for the first player, for comparison. Copy every player's `shared_turns.log` afterwards, even if nothing odd happened: the `MESSAGE` lines (one per event message) say which part of the game sent each message. |
 | 18 | A player who isn't first gets military access from an AI neighbour (note how: diplomacy screen from the attack popup, or the AI offered it), then moves an army into that land, now and again next turn. Note the time of each try. | The army walks in without asking again. If it asks again or shows a red cross: note the time; the log has two `ACCESS` lines there (whose view of the map the game used). |
 
 ## When something goes wrong

@@ -75,7 +75,8 @@ $hooks = @(
 	@(0x106EA3B9, 'battle new 1'), @(0x106EA603, 'battle new 2'), @(0x1057FCA0, 'battle state'), @(0x1088A5DD, 'battle ready'),
 	@(0x106B4088, 'end moves'),
 	@(0x1081A7E0, 'pf built for'), @(0x108746B1, 'access log 1'), @(0x108745E1, 'access log 2'), @(0x105EA330, 'pending push'),
-	@(0x105B60E0, 'pending pop'), @(0x10884342, 'negotiation log'), @(0x108840E2, 'war log'), @(0x1088381B, 'attack log'))
+	@(0x105B60E0, 'pending pop'), @(0x10884342, 'negotiation log'), @(0x108840E2, 'war log'), @(0x1088381B, 'attack log'),
+	@(0x1104EBC0, 'message log'))
 # the desync fixes: this mod's on the original, the 8-player mod's own (in .s2mp) on top of it
 $desync = @(
 	@(0x100B190C, 'frame fp pin'), @(0x10227D40, 'tick fp pin'), @(0x10EE9A71, 'battle no-kick'), @(0x10EF9A87, 'report no-kick'),

@@ -16,7 +16,7 @@ the 8-player mod installed, that mod's own versions are used.
 | **Desync recovery** | If a campaign still goes out of sync, the resync starts by itself instead of waiting for someone to press OK (Cancel used to drop the player). |
 | **Host resync key: Ctrl+Shift+F9** | If the campaign looks wrong or is stuck (one PC stuck on an AI's turn while another shows a player's turn, armies in different places), the **host** presses **Ctrl+Shift+F9** on the campaign map. Everyone gets the host's copy of the campaign, the same way a detected desync is fixed. Wait for the resync popup to finish. It does nothing in battles or the menus, and nothing if a client presses it. |
 | **Battle desync: no more kick** | A battle can't be resynced, so the game used to drop the out-of-sync player. Now the battle carries on for everyone. The out-of-sync player's view may drift (a unit alive on their screen that is dead for others). Back on the campaign map, the host's state is copied to everyone by the campaign resync. |
-| **Diagnostics log** | The game writes `shared_turns.log` into the game folder: one line whenever a shared turn starts or ends, someone presses End Turn, the turn passes on, a player orders an army to move or attack (and whether the game accepted it), a popup or diplomacy screen waits for a player's answer and is answered, a negotiation starts, war is declared, the game checks whether an army may enter foreign land, and for battles: who attacks whom, who gets the pre-battle choice, who answered it, and each step until the battle is over, and desyncs and resyncs (without the 8-player mod). Clicks on the map are logged only on the PC that clicked. Each game start keeps the previous one as `shared_turns.log.old`. It only records what happens; it changes nothing in the game. Send it along with any problem report. |
+| **Diagnostics log** | The game writes `shared_turns.log` into the game folder: one line whenever a shared turn starts or ends, someone presses End Turn, the turn passes on, a player orders an army to move or attack (and whether the game accepted it), a popup or diplomacy screen waits for a player's answer and is answered, a negotiation starts, war is declared, the game checks whether an army may enter foreign land, an event message reaches the screen (which part of the game sent it and whether it may show), and for battles: who attacks whom, who gets the pre-battle choice, who answered it, and each step until the battle is over, and desyncs and resyncs (without the 8-player mod). Clicks on the map are logged only on the PC that clicked; event-message lines can differ between PCs too. Each game start keeps the previous one as `shared_turns.log.old`. It only records what happens; it changes nothing in the game. Send it along with any problem report. |
 
 ## Install / uninstall
 1. Everyone closes Shogun 2.
@@ -38,8 +38,8 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game | `E0747E5DF8A815AD4A2771D5320D2B726C775DCDB65A8FC52955D7CD4D8533EC` |
-| the 8-player co-op mod v1.4 | `D9B515678744E4ACCB42EC9A40984E816AFFD0B4FD195ED9C2B9384D915F7F58` |
+| the original game | `4A974B984083B3B552AB39459A03BDCC645BB20CBF26F1DFE064015A37690FB7` |
+| the 8-player co-op mod v1.4 | `7539F804C7595E5E331ACB8EB668EBA4E9DF51D90AF130260A9D5E4B5C9CC53B` |
 
 So either everyone has the 8-player mod, or nobody does.
 

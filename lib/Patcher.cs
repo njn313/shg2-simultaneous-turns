@@ -204,7 +204,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.5 (milestone 1, fixes 2-6 and 4b, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack log)";
+	const string LogBuildTag = "shared turns 0.6 (milestone 1, fixes 2-6 and 4b, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -259,6 +259,8 @@ public static class SharedTurnsPatcher {
 		"ATTACK %f orders an attack on a character of %f: accepted",        // 40
 		"ATTACK %f orders an attack on a character of %f: refused",         // 41
 		"LOAD a save made during a turn (or a resync): group rebuilt without a turn start, who had ended ends again",   // 42
+		"MESSAGE event message sent from %d (return address), check vtable %d says show",          // 43
+		"MESSAGE event message sent from %d (return address), check vtable %d says don't show",    // 44
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
@@ -267,7 +269,8 @@ public static class SharedTurnsPatcher {
 		LogBattleState = 23, LogBattleReady = 24, LogDesyncBattle = 25, LogDesyncOther = 26, LogReportHostKick = 27,
 		LogReportLeave = 28, LogResyncAuto = 29, LogResyncKey = 30, LogResyncForced = 31, LogEndMoves = 32,
 		LogAccessBlocked = 33, LogAccessKept = 34, LogClickPf = 35, LogPendingPush = 36, LogPendingPop = 37,
-		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41, LogLoadSave = 42;
+		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41, LogLoadSave = 42, LogMessageShow = 43,
+		LogMessageHide = 44;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -2355,6 +2358,47 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
+	static uint EmitMessageLog(Asm a, uint log) {
+		// the thunk 1104EBC0 ("jmp FUN_110bd000": the event-message callback the campaign keeps at [obj+C4h], see "Event
+		// messages"; nothing else jumps there) jumps here instead: logs who sent the message (the model's return address,
+		// not found statically) and what its check object [event+2Ch] answers at vt+8 (show it; FUN_110bd000 and
+		// FUN_110bd790 ask it too, so asking once more changes nothing (?)). FUN_110bd000 calls vt+14h on it without a
+		// null test, the end only with one; null here logs vtable 0, "don't show".
+		// entry: [esp] = the caller's return address, [esp+4] = the event (cdecl); flags and eax/ecx/edx are dead
+		uint at = a.Here;
+		a.Raw(0x60);                                      // pushad                  (return address at [esp+20h], event at [esp+24h])
+		a.Raw(0x8B, 0x7C, 0x24, 0x24);                    // mov edi,[esp+24h]       (event)
+		a.Raw(0x85, 0xFF);                                // test edi,edi
+		a.J8(0x74, "skip");                               // jz skip
+		a.Raw(0x33, 0xDB);                                // xor ebx,ebx             (the check's vtable)
+		a.Raw(0x33, 0xED);                                // xor ebp,ebp             (its answer)
+		a.Raw(0x8B, 0x77, 0x2C);                          // mov esi,[edi+2Ch]       (the check)
+		a.Raw(0x85, 0xF6);                                // test esi,esi
+		a.J8(0x74, "nocheck");                            // jz nocheck
+		EmitStaticVtable(a);                              // eax = the check's vtable
+		a.Raw(0x8B, 0xD8);                                // mov ebx,eax
+		a.Raw(0x8B, 0xCE);                                // mov ecx,esi
+		a.Raw(0x8B, 0x06);                                // mov eax,[esi]
+		a.Raw(0xFF, 0x50, 0x08);                          // call dword ptr [eax+8]  (show it?)
+		a.Raw(0x0F, 0xB6, 0xE8);                          // movzx ebp,al
+		a.Mark("nocheck");
+		a.Raw(0x53);                                      // push ebx                (a2: the check's vtable)
+		a.Raw(0x8D, 0x74, 0x24, 0x24);                    // lea esi,[esp+24h]       (-> the return address)
+		EmitStaticVtable(a);                              // eax = the return address as a static address
+		a.Raw(0x50);                                      // push eax                (a1)
+		a.Raw(0x85, 0xED);                                // test ebp,ebp
+		a.J8(0x74, "hide");                               // jz hide
+		CallLog(a, log, LogMessageShow);
+		a.J8(0xEB, "skip");                               // jmp skip
+		a.Mark("hide");
+		CallLog(a, log, LogMessageHide);
+		a.Mark("skip");
+		a.Raw(0x61);                                      // popad
+		a.Jmp(0x110BD000);                                // the replaced jmp
+		a.Resolve();
+		return at;
+	}
+
 	static void ApplyGroupTurns(Asm s, uint log) {
 		ReserveDataDword(GroupLastDword);
 		ReserveDataDword(LogOpenedVa);
@@ -2499,6 +2543,10 @@ public static class SharedTurnsPatcher {
 		RedirectCall(0x10884342, 0x10692D90, Sym("NegotiationLog", EmitNegotiationLog(s, log)));
 		RedirectCall(0x108840E2, 0x107A4BD0, Sym("WarLog", EmitWarLog(s, log)));
 		RedirectCall(0x1088381B, AttackAllowed, Sym("AttackLog", EmitAttackLog(s, log)));
+
+		// Log only: who sends the event messages and what their check says (a member's messages during the AI turns)
+		ExpectBytes(0x1104EBC0, 0xE9, 0x3B, 0xE4, 0x06, 0x00);   // jmp FUN_110bd000
+		PutJmp(0x1104EBC0, Sym("MessageLog", EmitMessageLog(s, log)), 5);
 	}
 
 	// ---- desync fixes (standalone builds only) -------------------------------------------------------------------
