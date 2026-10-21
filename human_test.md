@@ -32,8 +32,7 @@ Setup: a new multiplayer campaign with 2 humans (3 or more need the 8-player co-
 clans are allied or only at peace: at peace, moving into the other's land asks first (the game's normal trespass
 question), that's not a bug. Avoid battles until test 9.
 
-"The first player" below is the human whose clan comes first in the turn order. In this build it is the only one
-of the group who can still open diplomacy.
+"The first player" below is the human whose clan comes first in the turn order.
 
 Known problems in this build (found in the tests so far; no need to report them again unless something new happens):
 - Event messages (agent discovered and the like) of a player who isn't first may pop up during the AI turns (test 17).
@@ -57,7 +56,12 @@ For each test, note pass / fail and anything odd, even if it didn't break the ga
 | 5 | Repeat 3 in a different order: the first player ends first. | Same as 3. |
 | 6 | If the campaign has a turn timer: let it run out without ending. | Everyone's turn ends. |
 | 7 | While not the first player: build, recruit units, research, change taxes. | It works and shows up on every PC. |
-| 8 | While not the first player: try diplomacy, agent recruitment, the clan button, disbanding a unit. | Greyed out / does nothing. That's known for this build, not a bug. |
+| 8 | While not the first player (and not ended yet): open diplomacy (button and the clan list on the radar), negotiate with an AI clan (e.g. trade), recruit an agent, open the clan screen, disband a unit (and scupper a ship). Then end your turn and try them again. | All work like for the first player and show up on every PC; after ending your turn they are greyed out again. The log has `DIPLOMACY negotiation <your clan> with ...` and `PENDING` lines on every PC. |
+| 8a | Two players negotiate one after the other: the first player opens diplomacy with an AI clan; while that screen is open, a player who isn't first tries to open diplomacy. Then the other way round. | The second player's diplomacy button is greyed out (or nothing opens) until the first one closes the screen; then it works. Nobody gets stuck. |
+| 8b | Both players open the diplomacy screen at the same time (relations list, no clan picked yet). One picks a clan and starts negotiating; then the other picks a clan too. | The second one sees the clan but offers do nothing (log: `DIPLOMACY <clan> picked a clan in the diplomacy panel while another clan's negotiation or popup is pending`); they close the screen and nothing else changes. The first one's negotiation goes on normally. Note anything else that happens on either PC. |
+| 8c | A player who isn't first offers a deal to the first player (both human, e.g. trade). | The first player gets the offer as the receiver (accept / decline / counter), like an offer from an AI clan. Note what each PC showed. |
+| 8d | During a shared turn, each player tries to save (Esc menu). | A player who hasn't ended gets the save dialog; one who has ended gets the "player X saved" message instead (note which you got). If a save is made, it loads as in test 11. |
+| 8e | (Optional, needs a battle) A player who isn't first attacks an AI army and uses "demand surrender" in the pre-battle screen. | The demand is made by that player's clan (the AI answers it as usual). Note what happens. |
 | 9 | (Optional) A player who isn't first attacks an AI army while the others keep moving. | Not supported yet. Note what happens: who sees the battle, whether the others' moves stop, whether the turn can still end. |
 | 10 | The first player declares war on another human (diplomacy). | From the next round, that human plays alone, after the others. |
 | 11 | In the middle of a shared turn, after a few moves (one player has ended): host saves, everyone quits, host loads and the others rejoin. Also with an older save from the middle of a turn. | Everyone can move again at once. Armies that had already moved keep their used-up movement (no fresh movement, no second income); whoever had ended must press End Turn again. The log has `LOAD a save made during a turn ...` followed by `START group ...` on every PC. |

@@ -75,8 +75,11 @@ $hooks = @(
 	@(0x106EA3B9, 'battle new 1'), @(0x106EA603, 'battle new 2'), @(0x1057FCA0, 'battle state'), @(0x1088A5DD, 'battle ready'),
 	@(0x106B4088, 'end moves'),
 	@(0x1081A7E0, 'pf built for'), @(0x108746B1, 'access log 1'), @(0x108745E1, 'access log 2'), @(0x105EA330, 'pending push'),
-	@(0x105B60E0, 'pending pop'), @(0x10884342, 'negotiation log'), @(0x108840E2, 'war log'), @(0x1088381B, 'attack log'),
-	@(0x1104EBC0, 'message log'))
+	@(0x105B60E0, 'pending pop'), @(0x10884342, 'negotiation gate'), @(0x108840E2, 'war log'), @(0x1088381B, 'attack log'),
+	@(0x1104EBC0, 'message log'),
+	@(0x11122988, 'ui turn gate'), @(0x11142F57, 'save message'), @(0x1122FF86, 'clan button'), @(0x112457A9, 'unit panel 1'),
+	@(0x1124ED39, 'unit panel 2'), @(0x1125458A, 'unit panel 3'), @(0x11254772, 'unit panel 4'), @(0x11143D98, 'demand surrender 1'),
+	@(0x111798B2, 'demand surrender 2'), @(0x11152230, 'ui negotiation'))
 # the desync fixes: this mod's on the original, the 8-player mod's own (in .s2mp) on top of it
 $desync = @(
 	@(0x100B190C, 'frame fp pin'), @(0x10227D40, 'tick fp pin'), @(0x10EE9A71, 'battle no-kick'), @(0x10EF9A87, 'report no-kick'),

@@ -29,8 +29,8 @@ INSTALL
        powershell -ExecutionPolicy Bypass -File install.ps1 -GamePath "D:\...\Total War SHOGUN 2"
 5. At the end it prints the SHA-256 hash of empire.retail.dll. Compare it with the host.
    For this build it must start with:
-     8EA91CD9   (without the 8-player mod)
-     A34423F8   (with the 8-player co-op mod v1.4)
+     B9A5FFDE   (without the 8-player mod)
+     CE0E1B64   (with the 8-player co-op mod v1.4)
 6. Start Shogun 2 from Steam as usual and join or host a multiplayer campaign.
 
 If you had an older version of this mod installed, just run Install.bat again: it
