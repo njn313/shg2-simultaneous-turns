@@ -18,7 +18,8 @@ The short checklist is in `README.md` ("Test plan"); this file has the details.
   there matter for reports:
   - `shared_turns.log`: the mod writes one line whenever a shared turn starts or ends, someone presses End
     Turn, the turn passes on, someone orders an army to move (`MOVE ... accepted` or `MOVE ... refused, reasons ...`),
-    or a battle starts and moves on (`BATTLE ...`). `CLICK` lines (an order given on the map) appear only on the PC that clicked; every
+    or a battle starts and moves on (`BATTLE ...`), or a desync or resync happens (`DESYNC` / `RESYNC`, only without
+    the 8-player mod: with it, that mod's own desync handling runs and isn't logged). `CLICK` lines (an order given on the map) appear only on the PC that clicked; every
     other line should be the same on every PC. Each new game start moves the previous log to
     `shared_turns.log.old`, so **copy it before starting the game a second time** after a problem.
   - `shogun2_..._crash_....mdmp`: the game writes one when it crashes. Only the newest one matters.
@@ -55,6 +56,7 @@ For each test, note pass / fail and anything odd, even if it didn't break the ga
 | 11 | (Optional) Host saves at the start of a turn, everyone quits, host loads and the others rejoin. | The shared turn starts again for everyone. |
 | 12 | Play 5 or more turns normally. | No "out of sync" popup. |
 | 13 | A player who isn't first leaves an army where a hostile AI army can reach it, ends the turn, and the host saves just before the last player ends (the save from before the AI turns). Repeat over a few turns until the AI attacks it. | That player gets the pre-battle choice (fight, autoresolve, retreat) like in the normal game. The log has `BATTLE new`, `BATTLE pre-battle entry for <clan>` lines and `BATTLE state` steps. If the army is destroyed without a choice: see below. |
+| 15 | On the campaign map the host presses **Ctrl+Shift+F9** (with and without the 8-player mod). | The resync popup appears for everyone and the game carries on afterwards. Without the 8-player mod the log has `RESYNC host pressed Ctrl+Shift+F9` on the host and `RESYNC forced by the host's key` on the others. |
 | 14 | Only with the 8-player co-op mod installed under this one: host with 3 or more players. | The lobby has 8 slots and its kick / invite buttons work; after a battle every player sees the right result; the host's Ctrl+Shift+F9 resyncs. The shared turns work for all allied humans. Anything of the 8-player mod that worked before and doesn't now is a conflict between the two mods: note what. |
 
 ## When something goes wrong
@@ -63,7 +65,7 @@ Note the time, the turn number and the test number first. Then:
 | What happens | What to collect |
 |---|---|
 | **The game crashes** (closes or "stopped working") | On that PC, from the game folder: the newest `shogun2_..._crash_....mdmp` (check its time) and `shared_turns.log` (if the game was started again since, `shared_turns.log.old`). If there's no new `.mdmp`: press Win+R, type `eventvwr.msc`, open **Windows Logs → Application**, find the **Application Error** entry at the crash time for `Shogun2.exe`, press Ctrl+C and paste it into a text file. The other players: their `shared_turns.log`. |
-| **The turn gets stuck** (nobody can end, the AI never starts, someone can't move) | Write down who the first player was, who pressed End Turn and in what order, what each player's End Turn button looked like, and whether armies could still move. Copy `shared_turns.log` **from every player** before anything else. Then everyone quits and the host loads the newest save; note whether the turn works after loading. (With the 8-player mod the host can first try its resync key, Ctrl+Shift+F9, and note whether that fixed it.) |
+| **The turn gets stuck** (nobody can end, the AI never starts, someone can't move) | Write down who the first player was, who pressed End Turn and in what order, what each player's End Turn button looked like, and whether armies could still move. Copy `shared_turns.log` **from every player** before anything else. Then the host presses **Ctrl+Shift+F9** (resync). Note whether that fixed it; if not, everyone quits and the host loads the newest save. |
 | **"Out of sync" popup** | `shared_turns.log` and the newest files from the game's `logs` folder **from every player**, and what everyone did just before. |
 | **An army won't move** (red cross, or the order is ignored) | Which player (first or not), which army, from where to where, allied or at peace with the land it enters. `shared_turns.log` from every player: the `CLICK` line says what the cursor offered (order type 0 = red cross), the `MOVE` line why the game refused (reason bits are listed in the line). |
 | **An army is attacked or destroyed without the pre-battle choice** (test 13) | Who owned the army, what each player saw (enemy army visible, attack sound, the approach), `shared_turns.log` **from every player** (the `BATTLE` lines) and the host's save from before the AI turns. |
@@ -80,7 +82,7 @@ What we did:
 What we expected:
 What happened (each player's view):
 With or without the 8-player mod:
-Did reloading (or Ctrl+Shift+F9 with the 8-player mod) help?
+Did Ctrl+Shift+F9 help? Did reloading?
 Files in this folder:
 ```
 

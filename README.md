@@ -4,14 +4,19 @@ In a multiplayer campaign of Total War: SHOGUN 2, human players who are not at w
 **at the same time** instead of waiting for each other. The AI clans still move one after another.
 
 Works on its own (the normal 2-player campaign) and together with the **8-player co-op mod v1.4** by Tasman Modding
-(a separate download) for up to 8 players. This mod contains none of the 8-player mod's code; it only makes sure the
-two fit together.
+(a separate download) for up to 8 players. On its own it also brings the 8-player mod's desync fixes (below); with
+the 8-player mod installed, that mod's own versions are used.
 
 ## What it does
 | | |
 |---|---|
 | **Shared turns (experimental)** | Human players who are not at war with each other play their turns **at the same time**. Pressing End Turn only ends your own part: the AI clans move once the last of you has ended (or the turn timer runs out). A human at war with another human still plays alone. For now, during a shared turn only the first player of the group can open diplomacy, recruit agents, use the clan button or disband units; the others can move, attack, build, recruit and end their turn. Each player's armies find their way with their own clan's view of the map (fog of war, wars, right of passage). Any player of the group can declare war from the attack popup (it opens their diplomacy screen). Battles during a shared turn are untested. |
-| **Diagnostics log** | The game writes `shared_turns.log` into the game folder: one line whenever a shared turn starts or ends, someone presses End Turn, the turn passes on, a player orders an army to move (and whether the game accepted it), and for battles: who attacks whom, who gets the pre-battle choice, who answered it, and each step until the battle is over. Clicks on the map are logged only on the PC that clicked. Each game start keeps the previous one as `shared_turns.log.old`. It only records what happens; it changes nothing in the game. Send it along with any problem report. |
+| **Desync: save screen bug** | Opening the Save or Load screen switched that PC's maths and text rules to its Windows language for the rest of the session (e.g. decimal comma on German, Czech, French or Russian Windows), so it no longer matched the other players. Fixed: those screens now only change how dates are shown. |
+| **Desync: floating-point drift** | The game never locked the CPU's floating-point settings, so anything that changed them on one PC (overlays, anti-virus, drivers, alt-tabbing) made that PC calculate slightly differently. Fixed: the settings are reset to the game's defaults every frame and every battle tick. |
+| **Desync recovery** | If a campaign still goes out of sync, the resync starts by itself instead of waiting for someone to press OK (Cancel used to drop the player). |
+| **Host resync key: Ctrl+Shift+F9** | If the campaign looks wrong or is stuck (one PC stuck on an AI's turn while another shows a player's turn, armies in different places), the **host** presses **Ctrl+Shift+F9** on the campaign map. Everyone gets the host's copy of the campaign, the same way a detected desync is fixed. Wait for the resync popup to finish. It does nothing in battles or the menus, and nothing if a client presses it. |
+| **Battle desync: no more kick** | A battle can't be resynced, so the game used to drop the out-of-sync player. Now the battle carries on for everyone. The out-of-sync player's view may drift (a unit alive on their screen that is dead for others). Back on the campaign map, the host's state is copied to everyone by the campaign resync. |
+| **Diagnostics log** | The game writes `shared_turns.log` into the game folder: one line whenever a shared turn starts or ends, someone presses End Turn, the turn passes on, a player orders an army to move (and whether the game accepted it), and for battles: who attacks whom, who gets the pre-battle choice, who answered it, and each step until the battle is over, and desyncs and resyncs (without the 8-player mod). Clicks on the map are logged only on the PC that clicked. Each game start keeps the previous one as `shared_turns.log.old`. It only records what happens; it changes nothing in the game. Send it along with any problem report. |
 
 ## Install / uninstall
 1. Everyone closes Shogun 2.
@@ -33,8 +38,8 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game | `17E179AEF43DAC52FB590633F4DE6BDD1619BE6D4D2A50E75A00894710F9BEEF` |
-| the 8-player co-op mod v1.4 | `353C69072E97220649D6393517790D58F5AA0907B038D5C93C0D1B7C8D55661B` |
+| the original game | `7892B036A66CD9100DB66B9CC5407849FB17F7A161B82687C69F17837CBFB258` |
+| the 8-player co-op mod v1.4 | `23C6F4CEF2466DAC1EFD3CCC2940B9E4CB9A41639CD9BD4EC94BB13E9B6B2E46` |
 
 So either everyone has the 8-player mod, or nobody does.
 
@@ -46,7 +51,8 @@ So either everyone has the 8-player mod, or nobody does.
 ## If something goes wrong
 Copy `shared_turns.log` from every player's game folder **before** starting the game again (a new start moves it to
 `.log.old`, the start after that overwrites it). After a crash also copy the newest `shogun2_..._crash_....mdmp` from
-the crashed PC's game folder. If a turn is stuck: everyone quits and the host loads the newest save.
+the crashed PC's game folder. If a turn is stuck: the host presses **Ctrl+Shift+F9** on the campaign map; if that
+doesn't help, everyone quits and the host loads the newest save.
 What to collect for each kind of problem: [human_test.md](human_test.md).
 
 ## Test plan
@@ -70,3 +76,5 @@ The tests for the current build, and what to send back when one fails, are in **
 | `NOTES.md` | reverse-engineering notes |
 
 The zip contains no game files: the installer builds the mod from your own copy of the game.
+
+The desync fixes were found by Tasman Modding for the 8-player co-op mod.

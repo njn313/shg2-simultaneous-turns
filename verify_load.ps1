@@ -73,6 +73,12 @@ $hooks = @(
 	@(0x1114AE22, 'pf ui click 2'), @(0x10883DD0, 'move log'), @(0x11129E27, 'click log 1'), @(0x1115199D, 'click log 2'),
 	@(0x1114174C, 'own action turn'), @(0x105FD550, 'pf turn start'),
 	@(0x106EA3B9, 'battle new 1'), @(0x106EA603, 'battle new 2'), @(0x1057FCA0, 'battle state'), @(0x1088A5DD, 'battle ready'))
+# the desync fixes: this mod's on the original, the 8-player mod's own (in .s2mp) on top of it
+$desync = @(
+	@(0x100B190C, 'frame fp pin'), @(0x10227D40, 'tick fp pin'), @(0x10EE9A71, 'battle no-kick'), @(0x10EF9A87, 'report no-kick'),
+	@(0x10F05914, 'auto resync'), @(0x10F10E2D, 'forced resync'))
+$on8p = $secs.ContainsKey('.s2mp')
+if (-not $on8p) { $hooks += $desync + @(@(0x10EF9AC1, 'log host kick'), @(0x10EF9AD1, 'log leave')) }
 foreach ($hook in $hooks) {
 	$ins = Mem $hook[0] 5
 	$dest = ([int64]$hook[0] + 5 + [BitConverter]::ToInt32($ins, 1)) -band 0xFFFFFFFF
@@ -80,16 +86,32 @@ foreach ($hook in $hooks) {
 	"hook {0,-17}: {1:X8} {2} -> {3:X8}  in .s2st: {4}" -f $hook[1], $hook[0], (Hex $ins[0..0]), $dest, $in
 	if (-not $in) { $ok = $false }
 }
+if ($on8p) {
+	$p8 = $secs['.s2mp']
+	foreach ($hook in $desync) {
+		$ins = Mem $hook[0] 5
+		$dest = ([int64]$hook[0] + 5 + [BitConverter]::ToInt32($ins, 1)) -band 0xFFFFFFFF
+		$in = $dest -ge $p8.Va -and $dest -lt ($p8.Va + $p8.Size)
+		"8p hook {0,-14}: {1:X8} {2} -> {3:X8}  in .s2mp: {4}" -f $hook[1], $hook[0], (Hex $ins[0..0]), $dest, $in
+		if (-not $in) { $ok = $false }
+	}
+}
+# save/load screens switch only LC_TIME (push 5), not LC_ALL (push 0): this mod's or the 8-player mod's byte
+$loc = Mem 0x110B84E1 3
+"save screen locale : {0} (expected 6A 05 E8)" -f (Hex $loc)
+if ((Hex $loc) -ne '6A 05 E8') { $ok = $false }
 # End Turn names the local faction: mov eax,[ecx+0B0h] and 6 nops in place of [[[ecx+8]+1498h]+2Ch]
 $endTurn = Mem 0x1111E8BF 12
 "end turn faction   : {0}" -f (Hex $endTurn)
 if ((Hex $endTurn) -ne '8B 81 B0 00 00 00 90 90 90 90 90 90') { $ok = $false }
-# the mod's data 11CB1538..11CB15AF (group state, log flags, pathfinder state): mapped, inside .data, zero
+# the mod's data from 11CB1538 (group state, log flags, pathfinder state; standalone also the resync key dword
+# 11CB15B0): mapped, inside .data, zero
+$need = 0x78; if (-not $on8p) { $need = 0x7C }
 $dataEnd = [int64]$secs['.data'].Va + $secs['.data'].Size
-$data = Mem 0x11CB1538 0x78
+$data = Mem 0x11CB1538 $need
 $nonzero = @($data | Where-Object { $_ -ne 0 }).Count
-".data              : ends at {0:X8} (needs 11CB15B0); mod data nonzero bytes: {1}" -f $dataEnd, $nonzero
-if ($dataEnd -lt 0x11CB15B0 -or $nonzero -ne 0) { $ok = $false }
+".data              : ends at {0:X8} (needs {1:X8}); mod data nonzero bytes: {2}" -f $dataEnd, (0x11CB1538 + $need), $nonzero
+if ($dataEnd -lt (0x11CB1538 + $need) -or $nonzero -ne 0) { $ok = $false }
 
 [void][St]::FreeLibrary($h)
 if ($ok) { "RESULT: patched DLL loads and the patch is intact in memory" } else { "RESULT: PROBLEM - see above"; exit 1 }

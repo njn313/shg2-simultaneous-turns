@@ -193,18 +193,18 @@ public static class SharedTurnsPatcher {
 	}
 
 	// ---- diagnostics: shared_turns.log ---------------------------------------------------------------------------
-	// One line per group-turn, order or battle event, appended to shared_turns.log next to Shogun2.exe. The file is
-	// opened, written and closed per line, so a crash loses nothing; the first line of a game launch moves the
+	// One line per group-turn, order, battle or desync event, appended to shared_turns.log next to Shogun2.exe. The
+	// file is opened, written and closed per line, so a crash loses nothing; the first line of a game launch moves the
 	// previous log to shared_turns.log.old. The log only reads game state and feeds nothing back, so it can't
 	// desync anything; its timestamps go to the file only, never into the DLL.
 	// Line: "2026-10-21 20:31:05.123 T12 ph1 <event> | cur=.. local=.. pb=.. pa=.. l=.. n=3 ended=011 latch=000 [a b c]"
 	// (T turn number, ph [world+50h], pb pending-battle state, pa pending action queued, l the +155Fh latch, then
 	// the group: ended / latch bits per slot, slot 0 first, and the members). Events whose text starts with '!' are
-	// written without the campaign part: no campaign may exist then (campaign construction).
+	// written without the campaign part: no campaign may exist then (campaign construction, desyncs, resyncs).
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.1 (milestone 1, fixes 2-5, battle log)";
+	const string LogBuildTag = "shared turns 0.2 (milestone 1, fixes 2-5, battle log, desync fixes)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -240,12 +240,21 @@ public static class SharedTurnsPatcher {
 		"BATTLE pre-battle entry for %f, ready %b",                         // 22
 		"BATTLE state %d -> %d",                                            // 23
 		"BATTLE ready from %f, choice %d",                                  // 24
+		// 25..31: the desync fixes, standalone builds only (with the 8-player mod its own routines run instead)
+		"!DESYNC detected here during a battle: no kick (mod)",             // 25
+		"!DESYNC detected here outside a battle: campaign resync, else the vanilla kick",   // 26
+		"!DESYNC the host drops reported player %d (vanilla kick)",         // 27
+		"!DESYNC this PC was reported: it leaves (vanilla kick)",           // 28
+		"!RESYNC started, auto-accepted",                                   // 29
+		"!RESYNC host pressed Ctrl+Shift+F9",                               // 30
+		"!RESYNC forced by the host's key",                                 // 31
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
 		LogCloseWait = 12, LogClose = 13, LogTurnEnd = 14, LogSkip = 15, LogRound = 16, LogMoveOk = 17,
 		LogMoveRefused = 18, LogClick = 19, LogBattleNew = 20, LogBattleKind = 21, LogBattleEntry = 22,
-		LogBattleState = 23, LogBattleReady = 24;
+		LogBattleState = 23, LogBattleReady = 24, LogDesyncBattle = 25, LogDesyncOther = 26, LogReportHostKick = 27,
+		LogReportLeave = 28, LogResyncAuto = 29, LogResyncKey = 30, LogResyncForced = 31;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -693,6 +702,7 @@ public static class SharedTurnsPatcher {
 	const uint UiPfActiveVa = GroupVa + 0x68;  // 1 while the UI has set the pathfinder up for the local member
 	const uint UiPfSavedVa = GroupVa + 0x6C;   // +0 pf, +4 its kept faction [pf+1F4h], +8 its kept mode [pf+208h]
 	const uint PfLastDword = GroupVa + 0x74;
+	// GroupVa + 78h: ResyncKeyPrevVa (desync fixes, standalone builds only)
 	const int PfDwords = 0x1C / 4;             // PfFocusVa .. PfLastDword
 	const uint FactionTurnStart = 0x105FD090;  // thiscall(faction)
 	const uint FactionTurnEnd = 0x105B2870;    // thiscall(faction)
@@ -2139,6 +2149,257 @@ public static class SharedTurnsPatcher {
 		RedirectCall(0x1088A5DD, 0x106FE6C0, Sym("BattleReadyLog", EmitBattleReadyLog(s, log)));
 	}
 
+	// ---- desync fixes (standalone builds only) -------------------------------------------------------------------
+	// Found by Tasman Modding (8-player co-op mod). On top of the 8-player mod its own versions sit at these sites
+	// already, so Build applies these only to the original DLL; players get the same desync handling either way.
+
+	// Floating-point modes. Every PC must run the simulation's maths identically. The engine never sets the CPU's
+	// floating-point modes itself (the only FLDCW/LDMXCSR in it are float->int helpers that restore the previous mode,
+	// and CRT internals), and TBB copies the main thread's modes to its workers. So anything that changes them on one
+	// PC (overlays, anti-virus hooks, drivers, code run on alt-tab) makes that PC's simulation drift. Fix: load the
+	// MSVC defaults (x87 control 027Fh: 53-bit precision, round to nearest, exceptions masked; MXCSR 1F80h) at the
+	// start of each frame's game update and of each battle tick. Where nothing changed them this does nothing.
+	const uint FrameUpdateCall = 0x100B190C;   // main frame: call FUN_10f36680 (multiplayer update), first game logic
+	const uint MultiplayerUpdate = 0x10F36680;
+	const uint BattleTickAt = 0x10227D40;      // battle tick (vtable slot 33): push [esp+8] / mov ecx,[esp+10h]
+	const uint BattleTickResume = 0x10227D48;
+
+	static void EmitPinFloatModes(Asm a) {
+		a.Raw(0x83, 0xEC, 0x04);                          // sub esp,4
+		a.Raw(0x66, 0xC7, 0x04, 0x24, 0x7F, 0x02);        // mov word ptr [esp],027Fh
+		a.Raw(0xD9, 0x2C, 0x24);                          // fldcw word ptr [esp]
+		a.Raw(0xC7, 0x04, 0x24, 0x80, 0x1F, 0x00, 0x00);  // mov dword ptr [esp],1F80h
+		a.Raw(0x0F, 0xAE, 0x14, 0x24);                    // ldmxcsr dword ptr [esp]
+		a.Raw(0x83, 0xC4, 0x04);                          // add esp,4
+	}
+
+	static uint EmitFramePin(Asm a, uint log) {
+		// replaces "call FUN_10f36680" (ecx = its this): the resync key, the modes, then tail-call the original
+		uint at = a.Here;
+		EmitResyncKeyPoll(a, log);
+		EmitPinFloatModes(a);
+		a.Jmp(MultiplayerUpdate);
+		return at;
+	}
+
+	static uint EmitBattleTickPin(Asm a) {
+		uint at = a.Here;
+		EmitPinFloatModes(a);
+		a.Raw(0xFF, 0x74, 0x24, 0x08);                    // push dword ptr [esp+8]  (replaced instructions)
+		a.Raw(0x8B, 0x4C, 0x24, 0x10);                    // mov ecx,[esp+10h]
+		a.Jmp(BattleTickResume);
+		return at;
+	}
+
+	// Battle desyncs no longer drop the player. A battle can't be resynced, so when its checksums differ the engine
+	// disconnects (mp_desync_kick_enabled): the desync handler FUN_10ee9a50 drops the local player, and FUN_10ef9a20
+	// (another player reported a desync) has the host kick the reported players / the reported client leave. Both
+	// skip the kick while a battle runs ([session+596D0h] = battle environment, the handler's own test for
+	// "mp_battle_desync"). The battle carries on; back on the map the campaign checksums catch any difference and the
+	// automatic resync copies the host's state to everyone. Campaign desyncs keep the original behaviour; the absolute
+	// flag reads (relocated) stay untouched.
+	const uint DesyncKickAt = 0x10EE9A71;        // mov ecx,[edi+2BE74h] (6 bytes); edi = session+4
+	const uint DesyncKickResume = 0x10EE9A77;
+	const uint DesyncKickSkip = 0x10EE9A8D;
+	const uint ReportKickAt = 0x10EF9A87;        // push ebp / push edi / lea eax,[esp+10h] (6 bytes); ebx = session
+	const uint ReportKickResume = 0x10EF9A8D;
+	const uint ReportKickSkip = 0x10EF9B29;
+
+	static uint EmitBattleNoKick(Asm a, uint log) {
+		uint at = a.Here;
+		a.Raw(0x6A, 0x00, 0x6A, 0x00);                    // push 0 / push 0
+		a.Raw(0x83, 0xBF, 0xCC, 0x96, 0x05, 0x00, 0x00);  // cmp dword ptr [edi+596CCh],0   (battle running?)
+		a.J32("skip", 0x0F, 0x85);                        // jne -> no kick
+		CallLog(a, log, LogDesyncOther);
+		a.Raw(0x8B, 0x8F, 0x74, 0xBE, 0x02, 0x00);        // mov ecx,[edi+2BE74h]          (replaced instruction)
+		a.Jmp(DesyncKickResume);
+		a.Mark("skip");
+		CallLog(a, log, LogDesyncBattle);
+		a.Jmp(DesyncKickSkip);
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitReportNoKick(Asm a) {
+		uint at = a.Here;
+		a.Raw(0x83, 0xBB, 0xD0, 0x96, 0x05, 0x00, 0x00);  // cmp dword ptr [ebx+596D0h],0
+		a.J32("skip", 0x0F, 0x85);                        // jne -> no kick
+		a.Raw(0x55, 0x57);                                // push ebp / push edi            (replaced instructions)
+		a.Raw(0x8D, 0x44, 0x24, 0x10);                    // lea eax,[esp+10h]
+		a.Jmp(ReportKickResume);
+		a.Mark("skip");
+		a.Jmp(ReportKickSkip);
+		a.Resolve();
+		return at;
+	}
+
+	// Log lines for the drops FUN_10ef9a20 really makes. It runs whenever [conn+18DCh] changes (about every 300 ms, in
+	// the lobby too) and walks a list of 8-byte entries (first dword = player id (?)), normally empty: the host drops
+	// each entry (FUN_10f02c10(entry, 2)), a client leaves when an entry is itself (FUN_10f033e0(3)). Only reached
+	// outside battles (ReportNoKick skips the walk in a battle). Both sites have no relocation and no jump into them;
+	// esi = &entry, edi = [session+2BE50h].
+	const uint ReportHostKickAt = 0x10EF9AC1;    // push 2 / push esi / mov ecx,edi (5 bytes), then call FUN_10f02c10
+	const uint ReportLeaveAt = 0x10EF9AD1;       // jne 10EF9ADC / push 3 / mov ecx,edi (6 bytes), then call FUN_10f033e0
+
+	static uint EmitReportHostKickLog(Asm a, uint log) {
+		uint at = a.Here;
+		a.Raw(0x6A, 0x00);                                // push 0
+		a.Raw(0xFF, 0x36);                                // push dword ptr [esi]   (player id (?))
+		CallLog(a, log, LogReportHostKick);
+		a.Raw(0x6A, 0x02);                                // push 2                 (replaced instructions)
+		a.Raw(0x56);                                      // push esi
+		a.Raw(0x8B, 0xCF);                                // mov ecx,edi
+		a.Jmp(0x10EF9AC6);                                // call FUN_10f02c10
+		return at;
+	}
+
+	static uint EmitReportLeaveLog(Asm a, uint log) {
+		uint at = a.Here;
+		a.J8(0x74, "leave");                              // je leave               (the entry is this PC; flags of cmp eax,[edi])
+		a.Jmp(0x10EF9ADC);                                // next entry
+		a.Mark("leave");
+		a.Raw(0x6A, 0x00, 0x6A, 0x00);                    // push 0 / push 0
+		CallLog(a, log, LogReportLeave);
+		a.Raw(0x6A, 0x03);                                // push 3                 (replaced instructions)
+		a.Raw(0x8B, 0xCF);                                // mov ecx,edi
+		a.Jmp(0x10EF9AD7);                                // call FUN_10f033e0
+		a.Resolve();
+		return at;
+	}
+
+	// Save/load screens leak the player's Windows locale into the simulation. FUN_110b83f0 (run when the save list,
+	// load list or save dialog opens, to format save dates) calls _wsetlocale(LC_ALL, "<language>_<country>.<cp>").
+	// Only some of those screens call FUN_110b55d0 to go back to "C", and only if they still own the token; so after a
+	// player opens Save or Load, the C runtime on that PC stays in the Windows locale for the rest of the session:
+	// number parsing/printing (decimal comma on German, Czech, French, Russian... Windows), case rules (Turkish I).
+	// Fix: switch only LC_TIME there (all those screens need is the dates); everything else stays "C".
+	const uint SaveScreenLocaleCategory = 0x110B84E1;   // push 0 (LC_ALL) -> push 5 (LC_TIME), before call _wsetlocale
+
+	// Automatic campaign resync. On a campaign desync FUN_10f058d0 marks a resync as pending ([resync+30h] = 1) and
+	// tells its listeners, which open the "mp_campaign_desync" popup. Nothing happens until someone presses OK there
+	// (FUN_11103d10 -> FUN_10f2d4b0(session, 1), which sends message 0xAC); Cancel or leaving it drops the player.
+	// Fix: accept straight away, exactly as the OK button does. The popup still shows the resync progress.
+	const uint ResyncNotifyCall = 0x10F05914;  // call FUN_102fc670 (notify listeners); esi = resync, edi = session
+	const uint NotifyListeners = 0x102FC670;   // thiscall(list; arg) ret 4
+	const uint AnswerResync = 0x10F2D4B0;      // thiscall(resync; session, bool accept) ret 8
+
+	static uint EmitAutoResync(Asm a, uint log) {
+		uint at = a.Here;
+		a.Raw(0x6A, 0x00, 0x6A, 0x00);                    // push 0 / push 0
+		CallLog(a, log, LogResyncAuto);
+		a.Raw(0xFF, 0x74, 0x24, 0x04);                    // push dword ptr [esp+4]  (the listeners' argument)
+		a.Call(NotifyListeners);                          // ecx = esi on entry, as the original call
+		a.Raw(0x6A, 0x01);                                // push 1                  (accept)
+		a.Raw(0x57);                                      // push edi                (session)
+		a.Raw(0x8B, 0xCE);                                // mov ecx,esi             (resync state)
+		a.Call(AnswerResync);
+		a.Raw(0xC2, 0x04, 0x00);                          // ret 4
+		return at;
+	}
+
+	// Host resync key (Ctrl+Shift+F9). A resync only starts on a PC that noticed a checksum mismatch itself. Desyncs
+	// that hang the game instead (one PC stuck on an AI turn while another thinks it is a player's turn) never start
+	// one, and players who didn't notice ignore the others' 0xAC "accept" messages (FUN_10efa140 needs state 1..3).
+	// Once every PC has accepted, the host saves the campaign, sends the file and everyone loads it. Fix:
+	//   - the host presses Ctrl+Shift+F9 (campaign, no resync running): it starts its own resync and broadcasts 0xAC
+	//     with value 2 ("force");
+	//   - every PC, the host included, that receives a "force" while idle starts a resync exactly as on a detected
+	//     desync (FUN_10f058d0: popup + the auto-accept above), then the message counts as a normal accept.
+	// FUN_10f058d0 still requires the campaign map, so the key does nothing in battles or the front end.
+	const uint ResyncAnswerCall = 0x10F10E2D;  // message 0xAC: call FUN_10efa140(resync; session, is_local, accept)
+	const uint ResyncAnswer = 0x10EFA140;
+	const uint StartResync = 0x10F058D0;       // thiscall(resync; session) ret 4
+	const uint SendResyncAnswer = 0x10F27820;  // thiscall(session; value) ret 4: broadcast message 0xAC
+	const uint SessionIsHost = 0x10F00940;     // thiscall(session) -> al
+	const uint GetAsyncKeyStateIat = 0x115A1558;
+	const uint ResyncKeyPrevVa = GroupVa + 0x78;   // 11CB15B0: the key was held last frame
+
+	static uint EmitForcedResyncAnswer(Asm a, uint log) {
+		uint at = a.Here;
+		a.Raw(0x80, 0x7C, 0x24, 0x0C, 0x02);              // cmp byte ptr [esp+0Ch],2   (accept == force?)
+		a.J8(0x75, "go");                                 // jne go
+		a.Raw(0xC6, 0x44, 0x24, 0x0C, 0x01);              // mov byte ptr [esp+0Ch],1   (counts as a normal accept)
+		a.Raw(0x83, 0x79, 0x30, 0x00);                    // cmp dword ptr [ecx+30h],0  (no resync running)
+		a.J8(0x75, "go");                                 // jne go
+		a.Raw(0x6A, 0x00, 0x6A, 0x00);                    // push 0 / push 0
+		CallLog(a, log, LogResyncForced);
+		a.Raw(0x51);                                      // push ecx
+		a.Raw(0xFF, 0x74, 0x24, 0x08);                    // push dword ptr [esp+8]     (session)
+		a.Call(StartResync);                              // ecx = resync
+		a.Raw(0x59);                                      // pop ecx
+		a.Mark("go");
+		a.Jmp(ResyncAnswer);
+		a.Resolve();
+		return at;
+	}
+
+	// polled once per frame from the frame hook (ebp = owner, [ebp+58h] = session); keeps every register
+	static void EmitResyncKeyPoll(Asm a, uint log) {
+		a.Raw(0x60);                                      // pushad
+		a.Raw(0xE8, 0x00, 0x00, 0x00, 0x00);              // call $+5
+		uint popAt = a.Here;
+		a.Raw(0x5E);                                      // pop esi
+		a.Raw(0x8B, 0x9E); D32(a, GetAsyncKeyStateIat - popAt);   // mov ebx,[esi+iat]
+		a.Raw(0x8D, 0xBE); D32(a, ResyncKeyPrevVa - popAt);       // lea edi,[esi+prev]
+		foreach (byte vk in new byte[] { 0x78, 0x11, 0x10 }) {   // F9, Ctrl, Shift
+			a.Raw(0x6A, vk);                              // push vk
+			a.Raw(0xFF, 0xD3);                            // call ebx                (GetAsyncKeyState)
+			a.Raw(0xF6, 0xC4, 0x80);                      // test ah,80h             (held)
+			a.J32("up", 0x0F, 0x84);                      // jz up
+		}
+		a.Raw(0x83, 0x3F, 0x00);                          // cmp dword ptr [edi],0   (only on the press itself)
+		a.J8(0x75, "done");                               // jne done
+		a.Raw(0xC7, 0x07, 0x01, 0x00, 0x00, 0x00);        // mov dword ptr [edi],1
+		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]       (session)
+		a.Raw(0x85, 0xC9);                                // test ecx,ecx
+		a.J8(0x74, "done");                               // jz done
+		a.Call(SessionIsHost);
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J8(0x74, "done");                               // jz done
+		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]
+		a.Raw(0x8B, 0x81, 0x78, 0xBE, 0x02, 0x00);        // mov eax,[ecx+2BE78h]    (resync state)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "done");                               // jz done
+		a.Raw(0x83, 0x78, 0x30, 0x00);                    // cmp dword ptr [eax+30h],0
+		a.J8(0x75, "done");                               // jne done
+		a.Raw(0x6A, 0x00, 0x6A, 0x00);                    // push 0 / push 0
+		CallLog(a, log, LogResyncKey);
+		a.Raw(0x8B, 0xF0);                                // mov esi,eax
+		a.Raw(0x51);                                      // push ecx                (session)
+		a.Raw(0x8B, 0xCE);                                // mov ecx,esi
+		a.Call(StartResync);                              // the host's own resync (popup + auto-accept)
+		a.Raw(0x83, 0x7E, 0x30, 0x00);                    // cmp dword ptr [esi+30h],0
+		a.J8(0x74, "done");                               // je done                 (not on the campaign map)
+		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]
+		a.Raw(0x6A, 0x02);                                // push 2                  (force: everyone else joins)
+		a.Call(SendResyncAnswer);                         // ecx = session
+		a.J8(0xEB, "done");                               // jmp done
+		a.Mark("up");
+		a.Raw(0xC7, 0x07, 0x00, 0x00, 0x00, 0x00);        // mov dword ptr [edi],0
+		a.Mark("done");
+		a.Raw(0x61);                                      // popad
+		a.Resolve();
+	}
+
+	static void ApplyDesyncFixes(Asm s, uint log) {
+		ReserveDataDword(ResyncKeyPrevVa);
+		ExpectBytes(SaveScreenLocaleCategory, 0x6A, 0x00, 0xE8);
+		PutBytes(SaveScreenLocaleCategory + 1, new byte[] { 0x05 });
+		RedirectCall(FrameUpdateCall, MultiplayerUpdate, Sym("FramePin", EmitFramePin(s, log)));
+		ExpectBytes(BattleTickAt, 0xFF, 0x74, 0x24, 0x08, 0x8B, 0x4C, 0x24, 0x10);
+		PutJmp(BattleTickAt, Sym("BattleTickPin", EmitBattleTickPin(s)), 8);
+		ExpectBytes(DesyncKickAt, 0x8B, 0x8F, 0x74, 0xBE, 0x02, 0x00);
+		PutJmp(DesyncKickAt, Sym("BattleNoKick", EmitBattleNoKick(s, log)), 6);
+		ExpectBytes(ReportKickAt, 0x55, 0x57, 0x8D, 0x44, 0x24, 0x10);
+		PutJmp(ReportKickAt, Sym("ReportNoKick", EmitReportNoKick(s)), 6);
+		ExpectBytes(ReportHostKickAt, 0x6A, 0x02, 0x56, 0x8B, 0xCF);
+		PutJmp(ReportHostKickAt, Sym("ReportHostKickLog", EmitReportHostKickLog(s, log)), 5);
+		ExpectBytes(ReportLeaveAt, 0x75, 0x09, 0x6A, 0x03, 0x8B, 0xCF);
+		PutJmp(ReportLeaveAt, Sym("ReportLeaveLog", EmitReportLeaveLog(s, log)), 6);
+		RedirectCall(ResyncNotifyCall, NotifyListeners, Sym("AutoResync", EmitAutoResync(s, log)));
+		RedirectCall(ResyncAnswerCall, ResyncAnswer, Sym("ForcedResyncAnswer", EmitForcedResyncAnswer(s, log)));
+	}
+
 	// ---- build ---------------------------------------------------------------------------------------------------
 	// is the file a build of this mod (any version)? The installer uses it to tell an older build from an unknown DLL
 	public static bool IsThisMod(string path) {
@@ -2160,6 +2421,7 @@ public static class SharedTurnsPatcher {
 		var s = new Asm { Va = ImageBase + U32(optOff + 56) };   // the new section goes right after the last one
 		uint log = Sym("Log", EmitLog(s));
 		ApplyGroupTurns(s, log);
+		if (inHash == OriginalSha256) ApplyDesyncFixes(s, log);   // the 8-player mod has its own at these sites
 		Sym("LogData", s.Here);
 		EmitLogData(s);
 		AddSection(SectionName, s.Bytes);
