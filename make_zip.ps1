@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
 $name = 'Shogun2-SharedTurns'
 $files = @('Install.bat', 'Uninstall.bat', 'install.ps1', 'verify_load.ps1', 'README.md', 'human_test.md', 'HOW TO INSTALL.txt',
-	'lib\Patcher.cs')
+	'LICENSE', 'lib\Patcher.cs')
 
 # the build's DLL hashes, from the pristine game copy and the 8-player build (neither is written to)
 $build = Join-Path $repo 're\build'
