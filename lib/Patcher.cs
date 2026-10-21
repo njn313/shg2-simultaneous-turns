@@ -204,7 +204,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.6 (milestone 1, fixes 2-6 and 4b, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message log)";
+	const string LogBuildTag = "shared turns 0.7 (milestone 1, fixes 2-6, 4b and 6b, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -2094,14 +2094,16 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
-	static uint EmitEndMoves(Asm a, uint pfRestore, uint log) {
+	static uint EmitEndMoves(Asm a, uint pfFocusFor, uint pfRestore, uint log) {
 		// replaces "call FUN_105b73d0" at 106B4088 in FUN_106b4070 (phase 2, after the current faction's End Turn; asked
 		// whenever movement is idle until it returns 0): FUN_105b73d0(f) moves on the first of f's characters whose order
 		// is left from the turn ([char+94h], +14h = 1; FUN_108d8f90, which drops the order if the movement manager refuses
 		// it). Vanilla only asks the current faction, so the members' queued moves (multi-turn moves, new units walking
 		// to their general) never ran. After the lead's, each living non-lead member's in slot order, with its ended bit
-		// cleared for the call (all have ended: "closing" GroupAllows would refuse its movers), then the turn's pathfinder
-		// set-up again (the member's order was pathed with its own, PfMoverAct).
+		// cleared for the call (all have ended: "closing" GroupAllows would refuse its movers) and the pathfinder set up
+		// for it (fix 6b: FUN_108d8f90 first asks the order's vt+10h, whose access test FUN_10874570 runs before the
+		// order reaches FUN_106aa660 / PfMoverAct; with the lead's set-up a recruit walking to its general through the
+		// member's own land was refused and its order dropped, tenth test), then the turn's set-up again.
 		// entry: ecx = current faction; returns al = 1 while something moved on; keeps ebx, esi, edi, ebp
 		uint at = a.Here;
 		a.Raw(0x53);                                      // push ebx
@@ -2124,6 +2126,10 @@ public static class SharedTurnsPatcher {
 		a.J8(0x75, "next");                               // jnz next
 		a.Raw(0xFF, 0x77, 0x04);                          // push dword ptr [edi+4]  (ended)
 		a.Raw(0x0F, 0xB3, 0x5F, 0x04);                    // btr [edi+4],ebx         (acts as if it hadn't ended)
+		a.Raw(0xFF, 0x74, 0x9F, 0x34);                    // push dword ptr [edi+ebx*4+34h] (member)
+		a.Raw(0x8B, 0x8E, 0x8C, 0x00, 0x00, 0x00);        // mov ecx,[esi+8Ch]
+		a.Raw(0xFF, 0x71, 0x08);                          // push dword ptr [ecx+8]  (campaign)
+		a.Call(pfFocusFor);                               // keeps every register and the flags
 		a.Raw(0x8B, 0x4C, 0x9F, 0x34);                    // mov ecx,[edi+ebx*4+34h]
 		a.Call(FactionResumeOrder);                       // FUN_105b73d0(member)
 		a.Raw(0x8F, 0x47, 0x04);                          // pop dword ptr [edi+4]
@@ -2523,7 +2529,7 @@ public static class SharedTurnsPatcher {
 
 		// Fix 6: the members' orders left from the turn (queued moves) move on during the lead's end of turn, as vanilla
 		// does for the current faction's
-		RedirectCall(0x106B4088, FactionResumeOrder, Sym("EndMoves", EmitEndMoves(s, pfRestore, log)));
+		RedirectCall(0x106B4088, FactionResumeOrder, Sym("EndMoves", EmitEndMoves(s, pfFocusFor, pfRestore, log)));
 
 		// Log only: which set-up the pathfinder had when a member was asked for military access it already had, and
 		// where a war declaration between humans stalls (pending actions, negotiations, wars, attack orders)
