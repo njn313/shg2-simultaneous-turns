@@ -38,8 +38,8 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game | `5A343D3E7C19FDD2113177704D8B3E91C1D83BE986728F1C50A73939D6A689C1` |
-| the 8-player co-op mod v1.4 | `72829BE42423291DF0EA5111C098DBFFDE912C523DD5D8068F5D732A750EC71D` |
+| the original game | `A2FE4DCCFFA790BDE76C679A54A7A1416B83328E940C00FFFFE7E81DAE583B53` |
+| the 8-player co-op mod v1.4 | `4F780FB39CACEC46BE37933088575A4907D28D796899EE62BEAD6697BEE5B042` |
 
 So either everyone has the 8-player mod, or nobody does.
 
@@ -60,11 +60,12 @@ The tests for the current build, and what to send back when one fails, are in **
 
 ## Not done yet
 - Not handled yet during a shared turn: diplomacy, agent recruitment, the clan button and disbanding for every player
-  of the group, battles while others keep moving, saving and loading in the middle of a shared turn (whoever had
-  already ended must end again), revolutions in the regions of anyone but the group's first player.
+  of the group, battles while others keep moving, revolutions in the regions of anyone but the group's first player.
 - Declaring war on another human of the group from the attack popup freezes the turn for everyone (whoever does it).
 - For players who aren't first, event messages may pop up during the AI clans' turns instead of at the start of
   their next turn.
+- After loading a save made during a shared turn (or after a resync), whoever had already ended must press End Turn
+  again.
 - Only the first player can skip army movement with the Space bar.
 
 ## Files

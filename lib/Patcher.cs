@@ -204,7 +204,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.3 (milestone 1, fixes 2-6, desync fixes, battle / access / pending / diplomacy / attack log)";
+	const string LogBuildTag = "shared turns 0.4 (milestone 1, fixes 2-6, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -219,7 +219,7 @@ public static class SharedTurnsPatcher {
 		"!RESET campaign loaded",                                           // 1
 		"START group, lead %f",                                             // 2
 		"SOLO %f plays alone",                                              // 3
-		"LOAD rebuild the group after a load",                              // 4
+		"LOAD the tick repeats the turn start (a new campaign's first turn): group start for every member",   // 4
 		"END_REQ %f flag %b -> vanilla end turn",                           // 5
 		"END_REQ %f flag %b -> already ended",                              // 6
 		"END_REQ %f flag %b -> treasury goes negative: PendingBankruptcy",  // 7
@@ -258,6 +258,7 @@ public static class SharedTurnsPatcher {
 		"DIPLOMACY %f declares war on %f",                                  // 39
 		"ATTACK %f orders an attack on a character of %f: accepted",        // 40
 		"ATTACK %f orders an attack on a character of %f: refused",         // 41
+		"LOAD a save made during a turn (or a resync): group rebuilt without a turn start, who had ended ends again",   // 42
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
@@ -266,7 +267,7 @@ public static class SharedTurnsPatcher {
 		LogBattleState = 23, LogBattleReady = 24, LogDesyncBattle = 25, LogDesyncOther = 26, LogReportHostKick = 27,
 		LogReportLeave = 28, LogResyncAuto = 29, LogResyncKey = 30, LogResyncForced = 31, LogEndMoves = 32,
 		LogAccessBlocked = 33, LogAccessKept = 34, LogClickPf = 35, LogPendingPush = 36, LogPendingPop = 37,
-		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41;
+		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41, LogLoadSave = 42;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -1058,10 +1059,11 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
-	static uint EmitGroupStart(Asm a, uint log) {
-		// thiscall(world), replaces the thunk at 10701DB0 ("mov ecx,[ecx+2Ch] / jmp FUN_105fd090", called by the
-		// transition FUN_1068a8d0 for the new current faction). Builds the group, then runs the faction turn start
-		// FUN_105fd090 (movement points, FactionTurnStart, ...) for the lead and then every other member.
+	static uint EmitGroupBuild(Asm a, uint log) {
+		// thiscall(world), keeps ebx/esi/edi/ebp: builds the group for the current faction [world+2Ch] (the lead).
+		// GroupStart (what the thunk at 10701DB0, "mov ecx,[ecx+2Ch] / jmp FUN_105fd090", called by the transition
+		// FUN_1068a8d0 for the new current faction, now reaches) then runs the turn starts; after loading a save made
+		// during a turn GroupTick calls it alone (the turn starts ran before the save).
 		// Members: human, not removed (+7A8h), not skipped (+894h), not AI-driven (+895h, dropped player), alive,
 		// not in played[], not at war with any member; only factions after the lead (earlier ones have played this
 		// round). Only a human lead without a proxy turn (+798h) forms a group; a lead alone leaves count = 0.
@@ -1157,6 +1159,23 @@ public static class SharedTurnsPatcher {
 		a.Mark("logged");
 		EmitGroupPtr(a, 0, LogCloseWaitVa);               // eax = &closeWaitLogged
 		a.Raw(0xC7, 0x00, 0x00, 0x00, 0x00, 0x00);        // mov dword ptr [eax],0
+		a.Raw(0x5D);                                      // pop ebp
+		a.Raw(0x5F);                                      // pop edi
+		a.Raw(0x5E);                                      // pop esi
+		a.Raw(0x5B);                                      // pop ebx
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitGroupStart(Asm a, uint groupBuild) {
+		// thiscall(world): GroupBuild, then the faction turn start FUN_105fd090 (movement points, FactionTurnStart,
+		// ...) for the lead and then every other member
+		uint at = a.Here;
+		a.Raw(0x53);                                      // push ebx
+		a.Raw(0x57);                                      // push edi
+		a.Call(groupBuild);
+		EmitGroupPtr(a, 3, GroupVa);                      // ebx = &group
 		a.Raw(0x8B, 0x4B, 0x34);                          // mov ecx,[ebx+34h]       (lead first, as vanilla)
 		a.Call(FactionTurnStart);
 		a.Raw(0xBF, 0x01, 0x00, 0x00, 0x00);              // mov edi,1
@@ -1168,9 +1187,7 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x47);                                      // inc edi
 		a.J8(0xEB, "starts");                             // jmp starts
 		a.Mark("done");
-		a.Raw(0x5D);                                      // pop ebp
 		a.Raw(0x5F);                                      // pop edi
-		a.Raw(0x5E);                                      // pop esi
 		a.Raw(0x5B);                                      // pop ebx
 		a.Raw(0xC3);                                      // ret
 		a.Resolve();
@@ -1178,9 +1195,10 @@ public static class SharedTurnsPatcher {
 	}
 
 	static uint EmitGroupStartLoad(Asm a, uint groupStart, uint log) {
-		// replaces "call FUN_105fd090" at 10704313: after every load (campaign+151Ch, resyncs included: they reload on
-		// every PC) the tick re-runs the current faction's turn start. The group isn't saved, so it is rebuilt here
-		// from the loaded diplomacy; members who had ended must end again. played[] is lost too (cleared).
+		// replaces "call FUN_105fd090" at 10704313: the tick runs the current faction's turn start once campaign+151Ch
+		// is set. 151Ch is in the save (written by FUN_106f7740 at 106F7C78, read back by the load constructor
+		// FUN_106463e0 at 10647CC2): the startpos has 1, so this is a new campaign's first turn; a save made during a
+		// turn has 0 and goes through GroupTick's rebuild instead. Runs GroupStart; played[] is cleared.
 		// entry: ecx = current faction, ebx = campaign; eax is dead (the call returns nothing)
 		uint at = a.Here;
 		a.Raw(0x6A, 0x00, 0x6A, 0x00);                    // push 0 / push 0
@@ -1387,7 +1405,7 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
-	static uint EmitGroupTick(Asm a, uint groupEndTurn, uint log) {
+	static uint EmitGroupTick(Asm a, uint groupEndTurn, uint groupBuild, uint log) {
 		// campaign tick FUN_10703ea0, replaces "cmp byte [ebx+155Fh],0 / je 10704216" at 107041CA (the +155Fh
 		// retry; ebx = campaign). While a group plays (current = lead, phase 1):
 		//   1. members whose player dropped (+895h) or that were removed (+7A8h) count as ended (vanilla's auto-end
@@ -1395,9 +1413,31 @@ public static class SharedTurnsPatcher {
 		//   2. latched members: retry CanEndTurn, then end them (GroupEndTurn with flag 1, as vanilla's retry);
 		//   3. every member ended: the lead's real end turn FUN_106a5da0(lead, 1), retried each tick until
 		//      CanEndTurn passes.
+		// First the rebuild after a load: the group isn't in the save, and a save made during a turn (resyncs too:
+		// they reload on every PC) has campaign+151Ch = 0, so the tick doesn't repeat the turn start (members[0] is
+		// 0 only between a campaign's construction and its first group start). Every member's turn start ran before
+		// the save (GroupStart runs them all before the transition's autosave FUN_106d5bc0), so only the group is
+		// rebuilt; who had ended must end again. In phase 2 or later (a resync after the lead's end) everyone had.
 		uint at = a.Here;
 		a.Raw(0x60);                                      // pushad
 		EmitGroupPtr(a, 7, GroupVa);                      // edi = &group
+		a.Raw(0x83, 0x7F, 0x34, 0x00);                    // cmp dword ptr [edi+34h],0 (members[0])
+		a.J8(0x75, "built");                              // jne built
+		a.Raw(0x80, 0xBB, 0x1C, 0x15, 0x00, 0x00, 0x00);  // cmp byte ptr [ebx+151Ch],0
+		a.J8(0x75, "built");                              // jne built               (the turn start below: GroupStartLoad)
+		a.Raw(0x6A, 0x00, 0x6A, 0x00);                    // push 0 / push 0
+		CallLog(a, log, LogLoadSave);
+		a.Raw(0x8B, 0x8B, 0x98, 0x14, 0x00, 0x00);        // mov ecx,[ebx+1498h]     (world)
+		a.Call(groupBuild);
+		a.Raw(0x8B, 0x83, 0x98, 0x14, 0x00, 0x00);        // mov eax,[ebx+1498h]
+		a.Raw(0x83, 0x78, 0x50, 0x02);                    // cmp dword ptr [eax+50h],2 (phase)
+		a.J8(0x72, "built");                              // jb built
+		a.Raw(0x8B, 0x0F);                                // mov ecx,[edi]           (count)
+		a.Raw(0xB8, 0x01, 0x00, 0x00, 0x00);              // mov eax,1
+		a.Raw(0xD3, 0xE0);                                // shl eax,cl
+		a.Raw(0x48);                                      // dec eax
+		a.Raw(0x89, 0x47, 0x04);                          // mov [edi+4],eax         (ended = every slot)
+		a.Mark("built");
 		a.Raw(0x83, 0x3F, 0x00);                          // cmp dword ptr [edi],0
 		a.J32("out", 0x0F, 0x84);                         // je out
 		a.Raw(0x8B, 0x83, 0x98, 0x14, 0x00, 0x00);        // mov eax,[ebx+1498h]     (world)
@@ -2321,13 +2361,14 @@ public static class SharedTurnsPatcher {
 		uint scratchOwner = Sym("ScratchOwner", EmitScratchOwner(s));
 		uint latchEq = Sym("LatchEq", EmitLatchEq(s, groupSlot, log));
 		uint zeroGroup = Sym("ZeroGroup", EmitZeroGroup(s));
-		uint groupStart = Sym("GroupStart", EmitGroupStart(s, log));
+		uint groupBuild = Sym("GroupBuild", EmitGroupBuild(s, log));
+		uint groupStart = Sym("GroupStart", EmitGroupStart(s, groupBuild));
 		uint groupStartLoad = Sym("GroupStartLoad", EmitGroupStartLoad(s, groupStart, log));
 		uint groupTurnEnd = Sym("GroupTurnEnd", EmitGroupTurnEnd(s, log));
 		uint pickerSkip = Sym("PickerSkip", EmitPickerSkip(s, log));
 		uint newRound = Sym("NewRound", EmitNewRound(s, log));
 		uint groupEndTurn = Sym("GroupEndTurn", EmitGroupEndTurn(s, groupSlot, log));
-		uint groupTick = Sym("GroupTick", EmitGroupTick(s, groupEndTurn, log));
+		uint groupTick = Sym("GroupTick", EmitGroupTick(s, groupEndTurn, groupBuild, log));
 
 		// campaign constructors FUN_106463e0 (edi = campaign) and FUN_10649180 (load, ebx = campaign)
 		uint resetNew = Sym("CampaignReset", EmitCampaignReset(s, zeroGroup, 0x87, 0x00, 0x10646DD3, log, LogResetNew));
