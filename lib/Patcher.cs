@@ -213,7 +213,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.9 (milestones 1 and 2, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message log)";
+	const string LogBuildTag = "shared turns 0.10 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -272,6 +272,7 @@ public static class SharedTurnsPatcher {
 		"MESSAGE event message sent from %d (return address), check vtable %d says don't show",    // 44
 		"DIPLOMACY negotiation %f with %f dropped: another clan's negotiation or popup is pending",  // 45
 		"DIPLOMACY %f picked a clan in the diplomacy panel while another clan's negotiation or popup is pending: no negotiation opened",   // 46
+		"RESUME %f carries on with a move the battle interrupted",         // 47
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
@@ -281,7 +282,7 @@ public static class SharedTurnsPatcher {
 		LogReportLeave = 28, LogResyncAuto = 29, LogResyncKey = 30, LogResyncForced = 31, LogEndMoves = 32,
 		LogAccessBlocked = 33, LogAccessKept = 34, LogClickPf = 35, LogPendingPush = 36, LogPendingPop = 37,
 		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41, LogLoadSave = 42, LogMessageShow = 43,
-		LogMessageHide = 44, LogNegotiationDropped = 45, LogNegotiationUiBlocked = 46;
+		LogMessageHide = 44, LogNegotiationDropped = 45, LogNegotiationUiBlocked = 46, LogResumeMembers = 47;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -736,6 +737,7 @@ public static class SharedTurnsPatcher {
 	const uint FactionTurnEnd = 0x105B2870;    // thiscall(faction)
 	const uint FactionIsDead = 0x105CB900;     // thiscall(faction) -> al
 	const uint FactionResumeOrder = 0x105B73D0;   // thiscall(faction) -> al: one of its characters' orders left from the turn moved on
+	const uint OrderResume = 0x108D8F20;       // thiscall(order; 1, 0, 0) ret 0Ch: re-issue an interrupted order
 	const uint AttackAllowed = 0x106E4F60;     // thiscall(campaign; faction) ret 4 -> al
 	const uint FactionsAtWar = 0x105CB0F0;     // thiscall(faction; other) ret 4 -> al
 	const uint CampaignEndTurn = 0x106A5DA0;   // thiscall(campaign; faction, flag) ret 8
@@ -2425,6 +2427,86 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
+	static uint EmitResumeMembers(Asm a, uint pfFocusFor, uint pfRestore, uint log) {
+		// replaces thunk 1070B490 at 10607876 in the battle driver FUN_10604260, reached once the battle is back in
+		// state 10 with +C2h / +C8h set (orders were interrupted): vanilla then re-issues the interrupted orders
+		// ([order+16h] set) of the current faction's characters only (1060787B..106078CB), so a member's move that ran
+		// into a battle (ninth test, kind 1) stopped for good. First the same loop for each living non-lead member in
+		// slot order, with its ended bit cleared for the calls (in the lead's end of turn every member has ended and
+		// "closing" GroupAllows would refuse its movers, as in EndMoves) and the pathfinder set up for it (state 10:
+		// PfFocusFor acts), then the turn's set-up again; then the replaced call for vanilla's loop.
+		// entry: ecx = world, ebx = the pending battle; returns eax = current-or-proxy; keeps ebx, esi, edi, ebp
+		uint at = a.Here;
+		a.Raw(0x53);                                      // push ebx
+		a.Raw(0x56);                                      // push esi
+		a.Raw(0x57);                                      // push edi
+		a.Raw(0x55);                                      // push ebp
+		a.Raw(0x51);                                      // push ecx                (world)
+		EmitGroupPtr(a, 7, GroupVa);                      // edi = &group
+		a.Raw(0x83, 0x3F, 0x02);                          // cmp dword ptr [edi],2
+		a.J32("done", 0x0F, 0x8C);                        // jl done                 (no group, or the lead alone)
+		a.Call(CurrentOrProxy);                           // thunk 1070B490(world)
+		a.Raw(0x3B, 0x47, 0x34);                          // cmp eax,[edi+34h]
+		a.J32("done", 0x0F, 0x85);                        // jne done                (a proxy turn: vanilla)
+		a.Raw(0xBD, 0x01, 0x00, 0x00, 0x00);              // mov ebp,1               (slot)
+		a.Mark("loop");
+		a.Raw(0x8B, 0x4C, 0xAF, 0x34);                    // mov ecx,[edi+ebp*4+34h] (member)
+		a.Call(FactionIsDead);
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J32("next", 0x0F, 0x85);                        // jnz next
+		a.Raw(0xFF, 0x77, 0x04);                          // push dword ptr [edi+4]  (ended)
+		a.Raw(0x0F, 0xB3, 0x6F, 0x04);                    // btr [edi+4],ebp         (acts as if it hadn't ended)
+		a.Raw(0x8B, 0x44, 0xAF, 0x34);                    // mov eax,[edi+ebp*4+34h]
+		a.Raw(0x8B, 0xB0, 0x18, 0x07, 0x00, 0x00);        // mov esi,[eax+718h]      (its characters)
+		a.Raw(0x8B, 0x88, 0x14, 0x07, 0x00, 0x00);        // mov ecx,[eax+714h]      (count)
+		a.Raw(0x8D, 0x14, 0x8E);                          // lea edx,[esi+ecx*4]
+		a.Raw(0x52);                                      // push edx                (end)
+		a.Mark("char");
+		a.Raw(0x3B, 0x34, 0x24);                          // cmp esi,[esp]
+		a.J8(0x73, "chars done");                         // jae chars done
+		a.Raw(0x8B, 0x06);                                // mov eax,[esi]
+		a.Raw(0x8B, 0x00);                                // mov eax,[eax]           (character)
+		a.Raw(0x8B, 0x88, 0x94, 0x00, 0x00, 0x00);        // mov ecx,[eax+94h]       (its order)
+		a.Raw(0x85, 0xC9);                                // test ecx,ecx
+		a.J8(0x74, "char next");                          // jz char next
+		a.Raw(0x80, 0x79, 0x16, 0x00);                    // cmp byte ptr [ecx+16h],0 (interrupted)
+		a.J8(0x74, "char next");                          // je char next
+		a.Raw(0xFF, 0x74, 0xAF, 0x34);                    // push dword ptr [edi+ebp*4+34h] (member)
+		a.Raw(0x8B, 0x43, 0x30);                          // mov eax,[ebx+30h]
+		a.Raw(0xFF, 0x70, 0x08);                          // push dword ptr [eax+8]  (campaign)
+		a.Call(pfFocusFor);                               // keeps every register and the flags
+		a.Raw(0x6A, 0x00);                                // push 0
+		a.Raw(0x6A, 0x00);                                // push 0
+		a.Raw(0x6A, 0x01);                                // push 1
+		a.Call(OrderResume);                              // FUN_108d8f20(order; 1, 0, 0), as at 106078C0
+		a.Raw(0x6A, 0x00);                                // push 0
+		a.Raw(0xFF, 0x74, 0xAF, 0x34);                    // push dword ptr [edi+ebp*4+34h]
+		CallLog(a, log, LogResumeMembers);
+		a.Mark("char next");
+		a.Raw(0x83, 0xC6, 0x04);                          // add esi,4
+		a.J8(0xEB, "char");                               // jmp char
+		a.Mark("chars done");
+		a.Raw(0x5A);                                      // pop edx
+		a.Raw(0x8B, 0x43, 0x30);                          // mov eax,[ebx+30h]
+		a.Raw(0xFF, 0x70, 0x08);                          // push dword ptr [eax+8]  (campaign)
+		a.Call(pfRestore);                                // nothing to undo unless PfFocusFor set it up
+		a.Raw(0x8F, 0x47, 0x04);                          // pop dword ptr [edi+4]
+		a.Mark("next");
+		a.Raw(0x45);                                      // inc ebp
+		a.Raw(0x3B, 0x2F);                                // cmp ebp,[edi]
+		a.J32("loop", 0x0F, 0x8C);                        // jl loop
+		a.Mark("done");
+		a.Raw(0x59);                                      // pop ecx                 (world)
+		a.Call(CurrentOrProxy);                           // thunk 1070B490(world) (replaced call)
+		a.Raw(0x5D);                                      // pop ebp
+		a.Raw(0x5F);                                      // pop edi
+		a.Raw(0x5E);                                      // pop esi
+		a.Raw(0x5B);                                      // pop ebx
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
 	// ---- log only: pathfinder set-ups at the access decision, pending actions, diplomacy, attacks -----------------
 	// None of these change anything the simulation reads (PfBuiltForVa is read only by the log), so they can't desync.
 
@@ -2821,6 +2903,9 @@ public static class SharedTurnsPatcher {
 		// Fix 6: the members' orders left from the turn (queued moves) move on during the lead's end of turn, as vanilla
 		// does for the current faction's
 		RedirectCall(0x106B4088, FactionResumeOrder, Sym("EndMoves", EmitEndMoves(s, pfFocusFor, pfRestore, log)));
+
+		// Milestone 3: after a battle the members' interrupted moves carry on too, not only the current faction's
+		RedirectCall(0x10607876, CurrentOrProxy, Sym("ResumeMembers", EmitResumeMembers(s, pfFocusFor, pfRestore, log)));
 
 		// Log only: which set-up the pathfinder had when a member was asked for military access it already had, and
 		// where a war declaration between humans stalls (pending actions, negotiations, wars, attack orders)

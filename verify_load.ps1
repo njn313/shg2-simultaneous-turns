@@ -73,7 +73,7 @@ $hooks = @(
 	@(0x1114AE22, 'pf ui click 2'), @(0x112517A5, 'pf ui recruit panel'), @(0x11232FB1, 'pf ui card state'), @(0x10883DD0, 'move log'), @(0x11129E27, 'click log 1'), @(0x1115199D, 'click log 2'),
 	@(0x1114174C, 'own action turn'), @(0x105FD550, 'pf turn start'),
 	@(0x106EA3B9, 'battle new 1'), @(0x106EA603, 'battle new 2'), @(0x1057FCA0, 'battle state'), @(0x1088A5DD, 'battle ready'),
-	@(0x106B4088, 'end moves'),
+	@(0x106B4088, 'end moves'), @(0x10607876, 'resume members'),
 	@(0x1081A7E0, 'pf built for'), @(0x108746B1, 'access log 1'), @(0x108745E1, 'access log 2'), @(0x105EA330, 'pending push'),
 	@(0x105B60E0, 'pending pop'), @(0x10884342, 'negotiation gate'), @(0x108840E2, 'war log'), @(0x1088381B, 'attack log'),
 	@(0x1104EBC0, 'message log'),

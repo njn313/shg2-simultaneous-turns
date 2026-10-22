@@ -30,7 +30,7 @@ The short checklist is in `README.md` ("Test plan"); this file has the details.
 ## Shared turns (current build)
 Setup: a new multiplayer campaign with 2 humans (3 or more need the 8-player co-op mod) who are **allied** (co-op campaign). Write down whether the
 clans are allied or only at peace: at peace, moving into the other's land asks first (the game's normal trespass
-question), that's not a bug. Avoid battles until test 9.
+question), that's not a bug. Battles started by a player during a shared turn are tests 9a-9f.
 
 "The first player" below is the human whose clan comes first in the turn order.
 
@@ -62,7 +62,12 @@ For each test, note pass / fail and anything odd, even if it didn't break the ga
 | 8c | A player who isn't first offers a deal to the first player (both human, e.g. trade). | The first player gets the offer as the receiver (accept / decline / counter), like an offer from an AI clan. Note what each PC showed. |
 | 8d | During a shared turn, each player tries to save (Esc menu). | A player who hasn't ended gets the save dialog; one who has ended gets the "player X saved" message instead (note which you got). If a save is made, it loads as in test 11. |
 | 8e | (Optional, needs a battle) A player who isn't first attacks an AI army and uses "demand surrender" in the pre-battle screen. | The demand is made by that player's clan (the AI answers it as usual). Note what happens. |
-| 9 | (Optional) A player who isn't first attacks an AI army while the others keep moving. | Not supported yet. Note what happens: who sees the battle, whether the others' moves stop, whether the turn can still end. |
+| 9a | A player who isn't first attacks an AI army and fights the battle (not autoresolve). | Everyone gets the pre-battle screen as in the normal game (the other player may play the AI side or watch). The battle loads for everyone; afterwards every PC shows the same result, the shared turn goes on and everyone can move again. The log has `BATTLE new: <your clan> attacks ...` and `BATTLE state` lines on every PC. |
+| 9b | A player who isn't first sends an army on a move that passes close to an enemy army, so that the move turns into a battle on the way (win it or autoresolve it). | If the army survives and has movement left, it carries on to where it was sent, on every PC; the log has `RESUME <your clan> carries on with a move the battle interrupted`. Note if it just stops instead. |
+| 9c | While the other player's battle is open on the campaign map (their pre-battle screen, their result, their army moving afterwards, or an autoresolve): note whether you also got a pre-battle screen. If you're on the free map, try to move an army and press End Turn. | Nothing happens (no freeze); both work again once the battle is over. |
+| 9d | A player who isn't first attacks an AI army and autoresolves. | The same result on every PC; everyone can move afterwards. |
+| 9e | A player who isn't first takes an AI settlement (siege assault). | After the battle the army moves into the settlement and it belongs to that clan on every PC. Note any extra popup or question and who got it. |
+| 9f | Two players of the group have armies next to each other; one of them attacks an AI army standing next to both. | Note whether the other player's army joins the battle and who commands it. The same result on every PC; both can move afterwards. |
 | 10 | The first player declares war on another human (diplomacy). | From the next round, that human plays alone, after the others. |
 | 11 | In the middle of a shared turn, after a few moves (one player has ended): host saves, everyone quits, host loads and the others rejoin. Also with an older save from the middle of a turn. | Everyone can move again at once. Armies that had already moved keep their used-up movement (no fresh movement, no second income); whoever had ended must press End Turn again. The log has `LOAD a save made during a turn ...` followed by `START group ...` on every PC. |
 | 12 | Play 5 or more turns normally. | No "out of sync" popup. |
