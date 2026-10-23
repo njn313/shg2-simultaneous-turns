@@ -75,7 +75,6 @@ The tests for the current build, and what to send back when one fails, are in **
 | `verify_load.ps1` | loads a patched DLL with Windows' loader (no code runs) and checks every patch |
 | `make_zip.bat`, `make_zip.ps1` | for the mod author: packs the player files into `Shogun2-SharedTurns_<hash>.zip` (needs the reference game copy in `re\game`) |
 | `human_test.md` | how to test a build in multiplayer and what to send back when something goes wrong |
-| `NOTES.md` | reverse-engineering notes |
 
 The zip contains no game files: the installer builds the mod from your own copy of the game.
 
