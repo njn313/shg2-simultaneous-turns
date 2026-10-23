@@ -10,7 +10,7 @@ the 8-player mod installed, that mod's own versions are used.
 ## What it does
 | | |
 |---|---|
-| **Shared turns (experimental)** | Human players who are not at war with each other play their turns **at the same time**. Pressing End Turn only ends your own part: the AI clans move once the last of you has ended (or the turn timer runs out). A human at war with another human still plays alone. Every player of the group can move, attack, build, recruit units and agents, use diplomacy, the clan button and disband units until they end their turn. One negotiation at a time: while one player negotiates (or answers an attack popup), the others' diplomacy waits; a diplomacy screen opened before that shows the clan but its offers do nothing, so close it and try again a moment later. Each player's armies find their way with their own clan's view of the map (fog of war, wars, right of passage), and moves longer than one turn (and new units walking to their general) carry on when the shared turn ends, for every player. Any player of the group can declare war on an AI clan from the attack popup (it opens their diplomacy screen). When the AI attacks a player's army, that player gets the pre-battle choice as usual. When a player of the group fights a battle, everyone waits for it as in the normal game (nobody moves meanwhile); afterwards an army whose move ran into the battle carries on, for every player. Battles started by a player during a shared turn are not tested in game yet. |
+| **Shared turns (experimental)** | Human players who are not at war with each other play their turns **at the same time**. Pressing End Turn only ends your own part: the AI clans move once the last of you has ended (or the turn timer runs out). A human at war with another human still plays alone. Every player of the group can move, attack, build, recruit units and agents, use diplomacy, the clan button and disband units until they end their turn. One negotiation at a time: while one player negotiates (or answers an attack popup), the others' diplomacy waits; a diplomacy screen opened before that shows the clan but its offers do nothing, so close it and try again a moment later. Each player's armies find their way with their own clan's view of the map (fog of war, wars, right of passage), and moves longer than one turn (and new units walking to their general) carry on when the shared turn ends, for every player. Any player of the group can declare war on an AI clan from the attack popup (it opens their diplomacy screen). When the AI attacks a player's army, that player gets the pre-battle choice as usual. When a player of the group fights a battle, everyone waits for it as in the normal game (nobody moves meanwhile); afterwards an army whose move ran into the battle carries on, for every player. A save made during a shared turn keeps it: after loading it (or after a resync) whoever had ended stays ended, and nobody plays twice in the same round. |
 | **Desync: save screen bug** | Opening the Save or Load screen switched that PC's maths and text rules to its Windows language for the rest of the session (e.g. decimal comma on German, Czech, French or Russian Windows), so it no longer matched the other players. Fixed: those screens now only change how dates are shown. |
 | **Desync: floating-point drift** | The game never locked the CPU's floating-point settings, so anything that changed them on one PC (overlays, anti-virus, drivers, alt-tabbing) made that PC calculate slightly differently. Fixed: the settings are reset to the game's defaults every frame and every battle tick. |
 | **Desync recovery** | If a campaign still goes out of sync, the resync starts by itself instead of waiting for someone to press OK (Cancel used to drop the player). |
@@ -37,8 +37,8 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game | `B543710C181D9FA26E52D2C7992161C352D3954B706E999D1C98DCDCCA5DC849` |
-| the 8-player co-op mod v1.4 | `94247EE8E405B6DD3E104A06F61B3893C1C5AECF072D54852D8C31EE78E69D52` |
+| the original game | `941E8CA9DA08C10EFDF71837DCACE8E857858AE21B1502348C5BB059D6D90E72` |
+| the 8-player co-op mod v1.4 | `17A327AEA75A0BD71F418C99C97221B816D9C3C2490F9497DB581151CCB98E6E` |
 
 So either everyone has the 8-player mod, or nobody does.
 
@@ -57,12 +57,13 @@ What to collect for each kind of problem: [human_test.md](human_test.md).
 The tests for the current build, and what to send back when one fails, are in **[human_test.md](human_test.md)**.
 
 ## Not done yet
-- Not handled yet during a shared turn: revolutions in the regions of anyone but the group's first player. During a
-  battle everyone waits, as in the normal game (nobody keeps moving while one player fights).
+- A revolution in the land of a player who isn't first doesn't play out during the shared turn: that player plays
+  their next turn alone, after the others (not tested in game yet). During a battle everyone waits, as in the normal
+  game (nobody keeps moving while one player fights).
 - For players who aren't first, event messages may pop up during the AI clans' turns instead of at the start of
   their next turn.
-- After loading a save made during a shared turn (or after a resync), whoever had already ended must press End Turn
-  again.
+- After loading a save made during a shared turn with build 0.17 or older, whoever had already ended must press End
+  Turn again.
 - Only the first player can skip army movement with the Space bar.
 
 ## Files
