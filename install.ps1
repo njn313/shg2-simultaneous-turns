@@ -1,11 +1,12 @@
 # Shogun 2 Shared Turns (experimental): installer and uninstaller.
 # Patches the player's own empire.retail.dll: the original game DLL, or the 8-player co-op mod v1.4 when that is
 # installed (install the 8-player mod first, then this one). The DLL it patched is kept next to it as
-# empire.retail.dll.sharedturns-base and put back by -Uninstall. Every player must end up with the same DLL hash.
+# empire.retail.dll.sharedturns-base and put back by -Uninstall. Every player must end up with the same DLL hash,
+# so everyone picks the same turn mode (asked when -Mode isn't given; Enter = hybrid).
 #
-#   powershell -ExecutionPolicy Bypass -File install.ps1 [-GamePath "<game folder>"]
+#   powershell -ExecutionPolicy Bypass -File install.ps1 [-Mode hybrid|simultaneous] [-GamePath "<game folder>"]
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall [-GamePath "<game folder>"]
-param([string]$GamePath = '', [switch]$Uninstall)
+param([string]$GamePath = '', [string]$Mode = '', [switch]$Uninstall)
 $ErrorActionPreference = 'Stop'
 if (-not ('SharedTurnsPatcher' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'lib\Patcher.cs') }
 function Sha($p) { (Get-FileHash $p -Algorithm SHA256).Hash }
@@ -67,6 +68,17 @@ if ($Uninstall) {
 }
 
 # ---- install / update ----------------------------------------------------------------------------------------------
+if (-not $Mode) {
+	""
+	"Turn mode (every player must choose the same one):"
+	"  1 = hybrid:       players who are not at war with each other play at the same time;"
+	"                    a player at war with another player plays alone (default)"
+	"  2 = simultaneous: all players always play at the same time, even at war with each other"
+	$answer = Read-Host "Mode [1]"
+	if ($answer -eq '2') { $Mode = 'simultaneous' } elseif ($answer -eq '' -or $answer -eq '1') { $Mode = 'hybrid' }
+	else { throw "Unknown choice '$answer': type 1 or 2. Nothing was changed." }
+}
+if ($Mode -ne 'hybrid' -and $Mode -ne 'simultaneous') { throw "-Mode must be hybrid or simultaneous. Nothing was changed." }
 if (BaseName $current) {
 	Copy-Item $dll $base -Force
 	$from = BaseName $current
@@ -82,16 +94,16 @@ else {
 		"of this mod. Another mod or another game version: not touching it. (A newer 8-player mod needs a newer Shared Turns.)")
 }
 $tmp = "$dll.sharedturns-new"
-[SharedTurnsPatcher]::Build($base, $tmp) | Out-Null
+[SharedTurnsPatcher]::Build($base, $tmp, $Mode) | Out-Null
 $new = Sha $tmp
-if ($new -eq $current) { Remove-Item $tmp; "Shared Turns is already installed (on $from)." }
+if ($new -eq $current) { Remove-Item $tmp; "Shared Turns is already installed (on $from, $Mode turns)." }
 else {
 	Move-Item $tmp $dll -Force
-	if ($installed) { "Updated Shared Turns (on $from)." } else { "Installed Shared Turns on $from (kept as empire.retail.dll.sharedturns-base)." }
+	if ($installed) { "Updated Shared Turns (on $from, $Mode turns)." } else { "Installed Shared Turns on $from, $Mode turns (kept as empire.retail.dll.sharedturns-base)." }
 }
 ""
 "empire.retail.dll sha256 $new"
-"Every player must see the same hash: all with the 8-player mod, or all without (README lists both)."
+"Every player must see the same hash: the same turn mode, and all with the 8-player mod or all without (README lists all four)."
 ""
 "Reminders:"
 "  - EXPERIMENTAL. Shogun 2 multiplayer is VAC-protected and this changes the engine DLL: use spare Steam accounts."

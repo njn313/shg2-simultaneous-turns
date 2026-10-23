@@ -29,6 +29,10 @@ public static class SharedTurnsPatcher {
 	static int peOff, optOff, secTableOff, nSec;
 	static uint[] relocVas;   // every address a HIGHLOW relocation rewrites (4 bytes each), sorted
 	public static string BaseName;
+	// the turn mode, chosen at install (every player must choose the same: the DLLs differ): "hybrid" = humans not at
+	// war with each other share a turn, a human at war with one of them plays alone; "simultaneous" = every human
+	// shares the turn, at war or not (GroupBuild has no war test). Sequential turns are the unmodded game.
+	public static string TurnMode = "hybrid";
 
 	static uint U32(int off) { return BitConverter.ToUInt32(b, off); }
 	static void Put32(int off, uint v) { Array.Copy(BitConverter.GetBytes(v), 0, b, off, 4); }
@@ -213,7 +217,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.18 (milestones 1, 2 and 3, milestone 4 part 1, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
+	const string LogBuildTag = "shared turns 0.19 (milestones 1, 2 and 3, milestone 4 part 1, turn modes hybrid / simultaneous, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -683,7 +687,7 @@ public static class SharedTurnsPatcher {
 	}
 
 	static string LogHeader() {
-		return "==== Shogun 2 Shared Turns log: game started (build: " + LogBuildTag + ") ====\r\n";
+		return "==== Shogun 2 Shared Turns log: game started (build: " + LogBuildTag + ", turn mode: " + TurnMode + ") ====\r\n";
 	}
 
 	// Log's data, after all other code in the section; fills in the "lea reg,[ebx+item]" offsets
@@ -1110,8 +1114,9 @@ public static class SharedTurnsPatcher {
 		// Members: human, not removed (+7A8h), not skipped (+894h), not AI-driven (+895h, dropped player), no
 		// revolution pending (+798h: it plays alone, so the vanilla proxy turn runs; a member's revolution starts in
 		// its turn start in GroupStart, after the group was formed), alive, not in played[], not at war with any
-		// member; only factions after the lead (earlier ones have played this round). Only a human lead without a
-		// proxy turn (+798h) forms a group; a lead alone leaves count = 0.
+		// member (hybrid mode only: the simultaneous build leaves the war test out); only factions after the lead
+		// (earlier ones have played this round). Only a human lead without a proxy turn (+798h) forms a group; a lead
+		// alone leaves count = 0.
 		uint at = a.Here;
 		a.Raw(0x53);                                      // push ebx
 		a.Raw(0x56);                                      // push esi
@@ -1169,17 +1174,19 @@ public static class SharedTurnsPatcher {
 		a.J32("scan", 0x0F, 0x84);                        // je scan                 (played this round already)
 		a.J8(0xEB, "played");                             // jmp played
 		a.Mark("notplayed");
-		a.Raw(0x33, 0xED);                                // xor ebp,ebp             (member index; world no longer needed)
-		a.Mark("war");
-		a.Raw(0x3B, 0x2B);                                // cmp ebp,[ebx]
-		a.J8(0x73, "add");                                // jae add
-		a.Raw(0xFF, 0x74, 0xAB, 0x34);                    // push dword ptr [ebx+ebp*4+34h] (member)
-		a.Raw(0x8B, 0xCE);                                // mov ecx,esi
-		a.Call(FactionsAtWar);
-		a.Raw(0x84, 0xC0);                                // test al,al
-		a.J32("scan", 0x0F, 0x85);                        // jne scan                (at war with a member)
-		a.Raw(0x45);                                      // inc ebp
-		a.J8(0xEB, "war");                                // jmp war
+		if (TurnMode != "simultaneous") {
+			a.Raw(0x33, 0xED);                            // xor ebp,ebp             (member index; world no longer needed)
+			a.Mark("war");
+			a.Raw(0x3B, 0x2B);                            // cmp ebp,[ebx]
+			a.J8(0x73, "add");                            // jae add
+			a.Raw(0xFF, 0x74, 0xAB, 0x34);                // push dword ptr [ebx+ebp*4+34h] (member)
+			a.Raw(0x8B, 0xCE);                            // mov ecx,esi
+			a.Call(FactionsAtWar);
+			a.Raw(0x84, 0xC0);                            // test al,al
+			a.J32("scan", 0x0F, 0x85);                    // jne scan                (at war with a member)
+			a.Raw(0x45);                                  // inc ebp
+			a.J8(0xEB, "war");                            // jmp war
+		}
 		a.Mark("add");
 		a.Raw(0x8B, 0x03);                                // mov eax,[ebx]
 		a.Raw(0x89, 0x74, 0x83, 0x34);                    // mov [ebx+eax*4+34h],esi (members[count] = candidate)
@@ -3514,6 +3521,12 @@ public static class SharedTurnsPatcher {
 	}
 
 	public static string Build(string inPath, string outPath) {
+		return Build(inPath, outPath, "hybrid");
+	}
+
+	public static string Build(string inPath, string outPath, string turnMode) {
+		if (turnMode != "hybrid" && turnMode != "simultaneous") throw new Exception("turn mode must be hybrid or simultaneous, not " + turnMode);
+		TurnMode = turnMode;
 		b = File.ReadAllBytes(inPath);
 		SymbolMap.Clear();
 		string inHash = Sha(b);
@@ -3532,6 +3545,6 @@ public static class SharedTurnsPatcher {
 		AddSection(SectionName, s.Bytes);
 
 		File.WriteAllBytes(outPath, b);
-		return string.Format("patched ({0}): {1} at {2:X8}, {3} bytes; output sha256 {4}", BaseName, SectionName, s.Va, s.Bytes.Count, Sha(b));
+		return string.Format("patched ({0}, {5} turns): {1} at {2:X8}, {3} bytes; output sha256 {4}", BaseName, SectionName, s.Va, s.Bytes.Count, Sha(b), TurnMode);
 	}
 }

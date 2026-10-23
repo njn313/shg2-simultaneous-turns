@@ -15,14 +15,17 @@ $build = Join-Path $repo 're\build'
 New-Item -ItemType Directory -Force $build | Out-Null
 Add-Type -Path (Join-Path $repo 'lib\Patcher.cs')
 $hashes = @()
-foreach ($in in @((Join-Path $repo 're\game\empire.retail.dll'), (Join-Path $build 'p8\empire.retail.dll'))) {
-	if (-not (Test-Path $in)) { throw "$in not found: it's needed to compute the build's DLL hashes." }
-	$dll = Join-Path $build 'zip_check.dll'
-	[SharedTurnsPatcher]::Build($in, $dll) | Out-Null
-	$hashes += (Get-FileHash $dll -Algorithm SHA256).Hash
-	Remove-Item $dll
+foreach ($mode in @('hybrid', 'simultaneous')) {
+	foreach ($in in @((Join-Path $repo 're\game\empire.retail.dll'), (Join-Path $build 'p8\empire.retail.dll'))) {
+		if (-not (Test-Path $in)) { throw "$in not found: it's needed to compute the build's DLL hashes." }
+		$dll = Join-Path $build 'zip_check.dll'
+		[SharedTurnsPatcher]::Build($in, $dll, $mode) | Out-Null
+		$hashes += (Get-FileHash $dll -Algorithm SHA256).Hash
+		Remove-Item $dll
+	}
 }
-"DLL sha256 $($hashes[0]) (original), $($hashes[1]) (8-player mod v1.4)"
+"DLL sha256, hybrid: $($hashes[0]) (original), $($hashes[1]) (8-player mod v1.4)"
+"DLL sha256, simultaneous: $($hashes[2]) (original), $($hashes[3]) (8-player mod v1.4)"
 foreach ($h in $hashes) {
 	if (-not (Select-String -Path (Join-Path $repo 'README.md') -SimpleMatch $h -Quiet)) { throw "README.md doesn't list $($h): update its hash table first." }
 	if (-not (Select-String -Path (Join-Path $repo 'HOW TO INSTALL.txt') -SimpleMatch $h.Substring(0, 8) -Quiet)) { throw "HOW TO INSTALL.txt doesn't name $($h.Substring(0, 8)): update the hash lines first." }
