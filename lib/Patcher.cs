@@ -213,7 +213,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.12 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
+	const string LogBuildTag = "shared turns 0.13 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -738,6 +738,7 @@ public static class SharedTurnsPatcher {
 	const uint FactionIsDead = 0x105CB900;     // thiscall(faction) -> al
 	const uint FactionResumeOrder = 0x105B73D0;   // thiscall(faction) -> al: one of its characters' orders left from the turn moved on
 	const uint OrderResume = 0x108D8F20;       // thiscall(order; 1, 0, 0) ret 0Ch: re-issue an interrupted order
+	const uint LuaType = 0x10EA3A90;           // cdecl lua_type(L, index): 4 = string
 	const uint AttackAllowed = 0x106E4F60;     // thiscall(campaign; faction) ret 4 -> al
 	const uint FactionsAtWar = 0x105CB0F0;     // thiscall(faction; other) ret 4 -> al
 	const uint CampaignEndTurn = 0x106A5DA0;   // thiscall(campaign; faction, flag) ret 8
@@ -2195,9 +2196,18 @@ public static class SharedTurnsPatcher {
 		// that negotiation. In a running group with another clan's negotiation or popup pending (as this PC sees it),
 		// the object isn't built and the binding returns nil: no command is sent and the panel's offers do nothing
 		// (its Lua stops on the nil negotiation; closing the panel works). The object's memory is left (small, rare).
+		// Only the outgoing form: the ctor sends the command only when the last argument is a string (the factions);
+		// otherwise it wraps an incoming negotiation (RequestDiplomacy, the receiver of another player's offer), which
+		// must pass (build 0.12 and earlier gave the receiver an empty panel).
 		// entry: ecx = edi = the new object, esi = Lua state; the caller pushes nil and returns 1 when edi = 0.
 		uint at = a.Here;
 		a.Raw(0x51);                                      // push ecx                (the object)
+		a.Raw(0x6A, 0xFF);                                // push -1
+		a.Raw(0x56);                                      // push esi                (L)
+		a.Call(LuaType);                                  // lua_type(L, -1), the ctor's own test
+		a.Raw(0x83, 0xC4, 0x08);                          // add esp,8
+		a.Raw(0x83, 0xF8, 0x04);                          // cmp eax,4               (LUA_TSTRING)
+		a.J8(0x75, "ctor");                               // jne ctor                (an incoming negotiation)
 		EmitGroupPtr(a, 0, UiGlobal);                     // eax = &ui
 		a.Raw(0x8B, 0x00);                                // mov eax,[eax]
 		a.Raw(0x8B, 0x80, 0x98, 0x0A, 0x00, 0x00);        // mov eax,[eax+0A98h]     (model)
@@ -2222,6 +2232,7 @@ public static class SharedTurnsPatcher {
 		a.Raw(0xC2, 0x08, 0x00);                          // ret 8
 		a.Mark("pass");
 		a.Raw(0x83, 0xC4, 0x08);                          // add esp,8
+		a.Mark("ctor");
 		a.Raw(0x59);                                      // pop ecx                 (the object)
 		a.Jmp(0x1110E1B0);
 		a.Resolve();
