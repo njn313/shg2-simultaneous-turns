@@ -1,7 +1,7 @@
 # Packs the player files into Shogun2-SharedTurns_<first 8 of the DLL hash>.zip in the repo folder, for sharing a
 # test build. No game files: players build the mod from their own game with Install.bat.
 # Needs re\game\empire.retail.dll (the pristine copy) and, for the 8-player hash, re\build\p8\empire.retail.dll (the
-# 8-player mod v1.4 built from it, see NOTES.md). Fails if README.md or "HOW TO INSTALL.txt" don't quote the build's
+# 8-player mod v1.4 built from it). Fails if README.md or "HOW TO INSTALL.txt" don't quote the build's
 # hashes (update them first). Staging goes to re\build\zipstage.
 #   powershell -ExecutionPolicy Bypass -File make_zip.ps1      (or double-click make_zip.bat)
 $ErrorActionPreference = 'Stop'

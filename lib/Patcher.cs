@@ -5,7 +5,7 @@
 // Inputs it accepts (anything else is refused):
 //  - the original empire.retail.dll of the current Steam build (OriginalSha256);
 //  - the 8-player co-op mod v1.4 (Tasman Modding) built from that original (EightPlayerV14Sha256), so both mods can
-//    be installed together: the 8-player mod first, this one on top (NOTES.md "Compatibility with the 8-player mod").
+//    be installed together: the 8-player mod first, this one on top.
 // All new code goes into a section of its own (".s2st", appended after the last section; the header has room for
 // several more); hooks are relative jumps/calls; data lives in .data's slack from DataFloor on, past the 8-player
 // mod's two dwords. Same input -> same output on every PC: no timestamps, no paths, no unordered collections.
