@@ -213,7 +213,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.10 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
+	const string LogBuildTag = "shared turns 0.11 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -2214,7 +2214,8 @@ public static class SharedTurnsPatcher {
 		a.Call(foreignPending);                           // (campaign, local)
 		a.Raw(0x85, 0xC0);                                // test eax,eax
 		a.J8(0x74, "pass");                               // jz pass
-		a.Raw(0x83, 0xC4, 0x04);                          // add esp,4               (local stays as the log's argument)
+		a.Raw(0x8B, 0x44, 0x24, 0x04);                    // mov eax,[esp+4]         (local)
+		a.Raw(0x89, 0x04, 0x24);                          // mov [esp],eax           (Log pops id and two arguments: local, local)
 		CallLog(a, log, LogNegotiationUiBlocked);
 		a.Raw(0x59);                                      // pop ecx
 		a.Raw(0x33, 0xFF);                                // xor edi,edi             (the caller pushes nil)
