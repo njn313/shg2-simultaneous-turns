@@ -213,7 +213,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.13 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
+	const string LogBuildTag = "shared turns 0.14 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume / resync key log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -273,6 +273,7 @@ public static class SharedTurnsPatcher {
 		"DIPLOMACY negotiation %f with %f dropped: another clan's negotiation or popup is pending",  // 45
 		"DIPLOMACY %f picked a clan in the diplomacy panel while another clan's negotiation or popup is pending: no negotiation opened",   // 46
 		"RESUME %f carries on with a move the battle interrupted",         // 47
+		"!RESYNC Ctrl+Shift+F9 seen: checks %d (1 session, 2 host, 4 resync object: 7 = all passed), resync state %d (0 = idle)",   // 48
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
@@ -282,7 +283,8 @@ public static class SharedTurnsPatcher {
 		LogReportLeave = 28, LogResyncAuto = 29, LogResyncKey = 30, LogResyncForced = 31, LogEndMoves = 32,
 		LogAccessBlocked = 33, LogAccessKept = 34, LogClickPf = 35, LogPendingPush = 36, LogPendingPop = 37,
 		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41, LogLoadSave = 42, LogMessageShow = 43,
-		LogMessageHide = 44, LogNegotiationDropped = 45, LogNegotiationUiBlocked = 46, LogResumeMembers = 47;
+		LogMessageHide = 44, LogNegotiationDropped = 45, LogNegotiationUiBlocked = 46, LogResumeMembers = 47,
+		LogResyncKeySeen = 48;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -3188,8 +3190,30 @@ public static class SharedTurnsPatcher {
 			a.J32("up", 0x0F, 0x84);                      // jz up
 		}
 		a.Raw(0x83, 0x3F, 0x00);                          // cmp dword ptr [edi],0   (only on the press itself)
-		a.J8(0x75, "done");                               // jne done
+		a.J32("done", 0x0F, 0x85);                        // jne done
 		a.Raw(0xC7, 0x07, 0x01, 0x00, 0x00, 0x00);        // mov dword ptr [edi],1
+		// log every press with the checks below (test 15: a host's press left no RESYNC line, 2026-10-23)
+		a.Raw(0x33, 0xDB);                                // xor ebx,ebx             (checks passed)
+		a.Raw(0x33, 0xF6);                                // xor esi,esi             (resync state)
+		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]       (session)
+		a.Raw(0x85, 0xC9);                                // test ecx,ecx
+		a.J8(0x74, "seen");                               // jz seen
+		a.Raw(0x83, 0xCB, 0x01);                          // or ebx,1
+		a.Call(SessionIsHost);
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J8(0x74, "seen host");                          // jz seen host
+		a.Raw(0x83, 0xCB, 0x02);                          // or ebx,2
+		a.Mark("seen host");
+		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]
+		a.Raw(0x8B, 0x81, 0x78, 0xBE, 0x02, 0x00);        // mov eax,[ecx+2BE78h]    (resync state)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "seen");                               // jz seen
+		a.Raw(0x83, 0xCB, 0x04);                          // or ebx,4
+		a.Raw(0x8B, 0x70, 0x30);                          // mov esi,[eax+30h]
+		a.Mark("seen");
+		a.Raw(0x56);                                      // push esi
+		a.Raw(0x53);                                      // push ebx
+		CallLog(a, log, LogResyncKeySeen);
 		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]       (session)
 		a.Raw(0x85, 0xC9);                                // test ecx,ecx
 		a.J8(0x74, "done");                               // jz done
