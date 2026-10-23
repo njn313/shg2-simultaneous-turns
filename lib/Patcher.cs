@@ -213,7 +213,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.14 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume / resync key log)";
+	const string LogBuildTag = "shared turns 0.15 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume / resync key log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -274,6 +274,8 @@ public static class SharedTurnsPatcher {
 		"DIPLOMACY %f picked a clan in the diplomacy panel while another clan's negotiation or popup is pending: no negotiation opened",   // 46
 		"RESUME %f carries on with a move the battle interrupted",         // 47
 		"!RESYNC Ctrl+Shift+F9 seen: checks %d (1 session, 2 host, 4 resync object: 7 = all passed), resync state %d (0 = idle)",   // 48
+		"!RESYNC key check runs (first frame with a network session), this PC is host: %b",   // 49
+		"!RESYNC F9 pressed: Ctrl held %b, Shift held %b",                 // 50
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
@@ -284,7 +286,7 @@ public static class SharedTurnsPatcher {
 		LogAccessBlocked = 33, LogAccessKept = 34, LogClickPf = 35, LogPendingPush = 36, LogPendingPop = 37,
 		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41, LogLoadSave = 42, LogMessageShow = 43,
 		LogMessageHide = 44, LogNegotiationDropped = 45, LogNegotiationUiBlocked = 46, LogResumeMembers = 47,
-		LogResyncKeySeen = 48;
+		LogResyncKeySeen = 48, LogResyncPollRuns = 49, LogResyncF9 = 50;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -3155,6 +3157,7 @@ public static class SharedTurnsPatcher {
 	const uint SessionIsHost = 0x10F00940;     // thiscall(session) -> al
 	const uint GetAsyncKeyStateIat = 0x115A1558;
 	const uint ResyncKeyPrevVa = GroupVa + 0x78;   // 11CB15B0: the key was held last frame
+	const uint ResyncDiagVa = GroupVa + 0x80;      // 11CB15B8, log only: byte 0 = the poll ran once, byte 1 = F9 held last frame
 
 	static uint EmitForcedResyncAnswer(Asm a, uint log) {
 		uint at = a.Here;
@@ -3183,6 +3186,39 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x5E);                                      // pop esi
 		a.Raw(0x8B, 0x9E); D32(a, GetAsyncKeyStateIat - popAt);   // mov ebx,[esi+iat]
 		a.Raw(0x8D, 0xBE); D32(a, ResyncKeyPrevVa - popAt);       // lea edi,[esi+prev]
+		// log only (test 15: no press was ever logged, 2026-10-23): one line the first time this runs, one per F9 press
+		// with the modifiers as GetAsyncKeyState sees them
+		a.Raw(0x8D, 0x96); D32(a, ResyncDiagVa - popAt);          // lea edx,[esi+diag]
+		a.Raw(0x80, 0x3A, 0x00);                          // cmp byte ptr [edx],0
+		a.J8(0x75, "ran");                                // jne ran
+		a.Raw(0xC6, 0x02, 0x01);                          // mov byte ptr [edx],1
+		a.Raw(0x6A, 0x00);                                // push 0
+		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]       (session, set: the call site tests it)
+		a.Call(SessionIsHost);
+		a.Raw(0x0F, 0xB6, 0xC0);                          // movzx eax,al
+		a.Raw(0x50);                                      // push eax
+		CallLog(a, log, LogResyncPollRuns);
+		a.Mark("ran");
+		a.Raw(0x6A, 0x78);                                // push 78h                (F9)
+		a.Raw(0xFF, 0xD3);                                // call ebx                (GetAsyncKeyState)
+		a.Raw(0x8D, 0x96); D32(a, ResyncDiagVa - popAt);          // lea edx,[esi+diag]
+		a.Raw(0xF6, 0xC4, 0x80);                          // test ah,80h
+		a.Raw(0x0F, 0x95, 0xC0);                          // setnz al
+		a.Raw(0x3A, 0x42, 0x01);                          // cmp al,[edx+1]
+		a.J8(0x74, "f9 same");                            // je f9 same
+		a.Raw(0x88, 0x42, 0x01);                          // mov [edx+1],al
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J8(0x74, "f9 same");                            // jz f9 same              (released)
+		foreach (byte vk in new byte[] { 0x10, 0x11 }) {  // Shift (second argument), then Ctrl (first)
+			a.Raw(0x6A, vk);                              // push vk
+			a.Raw(0xFF, 0xD3);                            // call ebx                (GetAsyncKeyState)
+			a.Raw(0xF6, 0xC4, 0x80);                      // test ah,80h
+			a.Raw(0x0F, 0x95, 0xC0);                      // setnz al
+			a.Raw(0x0F, 0xB6, 0xC0);                      // movzx eax,al
+			a.Raw(0x50);                                  // push eax
+		}
+		CallLog(a, log, LogResyncF9);
+		a.Mark("f9 same");
 		foreach (byte vk in new byte[] { 0x78, 0x11, 0x10 }) {   // F9, Ctrl, Shift
 			a.Raw(0x6A, vk);                              // push vk
 			a.Raw(0xFF, 0xD3);                            // call ebx                (GetAsyncKeyState)
@@ -3247,6 +3283,7 @@ public static class SharedTurnsPatcher {
 
 	static void ApplyDesyncFixes(Asm s, uint log) {
 		ReserveDataDword(ResyncKeyPrevVa);
+		ReserveDataDword(ResyncDiagVa);
 		ExpectBytes(SaveScreenLocaleCategory, 0x6A, 0x00, 0xE8);
 		PutBytes(SaveScreenLocaleCategory + 1, new byte[] { 0x05 });
 		RedirectCall(FrameUpdateCall, MultiplayerUpdate, Sym("FramePin", EmitFramePin(s, log)));
