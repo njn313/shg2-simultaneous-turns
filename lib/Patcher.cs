@@ -213,7 +213,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.17 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
+	const string LogBuildTag = "shared turns 0.18 (milestones 1, 2 and 3, milestone 4 part 1, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -267,12 +267,15 @@ public static class SharedTurnsPatcher {
 		"DIPLOMACY %f declares war on %f",                                  // 39
 		"ATTACK %f orders an attack on a character of %f: accepted",        // 40
 		"ATTACK %f orders an attack on a character of %f: refused",         // 41
-		"LOAD a save made during a turn (or a resync): group rebuilt without a turn start, who had ended ends again",   // 42
+		"LOAD a save made during a turn (or a resync) without the group in it: group rebuilt without a turn start, who had ended ends again",   // 42
 		"MESSAGE event message sent from %d (return address), check vtable %d says show",          // 43
 		"MESSAGE event message sent from %d (return address), check vtable %d says don't show",    // 44
 		"DIPLOMACY negotiation %f with %f dropped: another clan's negotiation or popup is pending",  // 45
 		"DIPLOMACY %f picked a clan in the diplomacy panel while another clan's negotiation or popup is pending: no negotiation opened",   // 46
 		"RESUME %f carries on with a move the battle interrupted",         // 47
+		"LOAD the group from the save: lead %f, %d member slots (who had ended and who played this round are kept)",   // 48
+		"REVOLT %f: a revolution started at this member's turn start in a shared turn (it plays its next turn alone)",   // 49
+		"SAVE the group goes into the save: lead %f, %d member slots",     // 50
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
@@ -282,7 +285,8 @@ public static class SharedTurnsPatcher {
 		LogReportLeave = 28, LogResyncAuto = 29, LogResyncKey = 30, LogResyncForced = 31, LogEndMoves = 32,
 		LogAccessBlocked = 33, LogAccessKept = 34, LogClickPf = 35, LogPendingPush = 36, LogPendingPop = 37,
 		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41, LogLoadSave = 42, LogMessageShow = 43,
-		LogMessageHide = 44, LogNegotiationDropped = 45, LogNegotiationUiBlocked = 46, LogResumeMembers = 47;
+		LogMessageHide = 44, LogNegotiationDropped = 45, LogNegotiationUiBlocked = 46, LogResumeMembers = 47,
+		LogLoadGroup = 48, LogRevolt = 49, LogSaveGroup = 50;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -733,6 +737,12 @@ public static class SharedTurnsPatcher {
 	// GroupVa + 78h, + 80h: the resync key state until build 0.16 (free now)
 	const int PfDwords = 0x1C / 4;             // PfFocusVa .. PfLastDword
 	const uint PfBuiltForVa = GroupVa + 0x7C;  // log only: the faction the pathfinder's region flags were last built for
+	// the group in the save (milestone 4: SaveGroup, LoadGroup, GroupRestore):
+	const uint SaveLoadedVa = GroupVa + 0x84;  // 1 once LoadingGame read a complete group from the save, until GroupTick uses it
+	const uint SaveBufVa = GroupVa + 0x88;     // the values read: GroupVa's 21 dwords, factions as list position + 1
+	const uint SaveLastDword = SaveBufVa + 0x50;
+	const int SaveValues = 0x54 / 4;           // named numbers "s2st_a".."s2st_u" in the save's SCRIPT_VARIABLES record
+	const int SaveVersion = 1;                 // saved in place of +0Ch (the mover-owner scratch)
 	const uint FactionTurnStart = 0x105FD090;  // thiscall(faction)
 	const uint FactionTurnEnd = 0x105B2870;    // thiscall(faction)
 	const uint FactionIsDead = 0x105CB900;     // thiscall(faction) -> al
@@ -747,6 +757,19 @@ public static class SharedTurnsPatcher {
 	const uint OwnerOf = 0x103E5960;           // thiscall(char+254h) -> owning faction
 	const uint EventInit = 0x10BA5980;         // thiscall(event)
 	const uint EventDispatch = 0x10BE0350;     // cdecl(event*)
+	// the save format (ESF), as the Lua save_named_value / load_named_value bindings FUN_1060e5b0 / FUN_1060e800 use it.
+	// A name object is +0 length, +4 length, +8 the text, +0Ch NameHash(text); the bindings free a heap copy of the
+	// text afterwards, so the save format keeps no pointer to it.
+	const uint NameHash = 0x1008FEE0;          // stdcall(char*) -> eax
+	const uint EsfChildOpen = 0x10BA6370;      // thiscall(child; record, &name, 0) ret 0Ch: write a named child (18h bytes)
+	const uint EsfPutType = 0x1013FBA0;        // thiscall(child; &uint32) ret 4: the value's type (1 = number)
+	const uint EsfPutInt = 0x1013FAF0;         // thiscall(child; &int32) ret 4
+	const uint EsfChildClose = 0x10BCD5C0;     // thiscall(child)
+	const uint EsfHas = 0x10BD01F0;            // thiscall(record; &name) ret 4 -> al: it has a child of that name
+	const uint EsfChildRead = 0x10BA5C00;      // thiscall(child; record, &name) ret 8: open that child for reading (44h bytes)
+	const uint EsfGetType = 0x1013B390;        // thiscall(child; &uint32) ret 4
+	const uint EsfGetInt = 0x1013B2C0;         // thiscall(child; &int32) ret 4
+	const uint EsfChildEnd = 0x10BAE740;       // thiscall(child)
 	const uint EventDestroy = 0x10BAE630;      // thiscall(event)
 	const uint FactionAboutToEndTurnVt = 0x11608E1C;
 	const uint IsEqual = 0x105870B0;           // cdecl(a, b) -> al = a == b; changes only eax
@@ -1056,8 +1079,9 @@ public static class SharedTurnsPatcher {
 	}
 
 	static uint EmitZeroGroup(Asm a) {
-		// clears the whole group state and the pathfinder block (they would outlive a campaign in the same process),
-		// not the log's dwords between them; keeps every register
+		// clears the whole group state, the pathfinder block and SaveLoadedVa (they would outlive a campaign in the
+		// same process), not the log's dwords between them; keeps every register. The load constructor FUN_106463e0
+		// runs it (10646DCA) before it reads the save (LoadGroup at 106559A7).
 		uint at = a.Here;
 		a.Raw(0x57);                                      // push edi
 		a.Raw(0x51);                                      // push ecx
@@ -1069,6 +1093,8 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x83, 0xC7, (byte)(PfFocusVa - (GroupVa + GroupDwords * 4)));   // add edi,8 (skip the log's dwords)
 		a.Raw(0xB9); a.Bytes.AddRange(BitConverter.GetBytes(PfDwords));   // mov ecx,PfDwords
 		a.Raw(0xF3, 0xAB);                                // rep stosd
+		EmitGroupPtr(a, 7, SaveLoadedVa);                 // edi = &saveLoaded
+		a.Raw(0x89, 0x07);                                // mov [edi],eax
 		a.Raw(0x58);                                      // pop eax
 		a.Raw(0x59);                                      // pop ecx
 		a.Raw(0x5F);                                      // pop edi
@@ -1081,9 +1107,11 @@ public static class SharedTurnsPatcher {
 		// GroupStart (what the thunk at 10701DB0, "mov ecx,[ecx+2Ch] / jmp FUN_105fd090", called by the transition
 		// FUN_1068a8d0 for the new current faction, now reaches) then runs the turn starts; after loading a save made
 		// during a turn GroupTick calls it alone (the turn starts ran before the save).
-		// Members: human, not removed (+7A8h), not skipped (+894h), not AI-driven (+895h, dropped player), alive,
-		// not in played[], not at war with any member; only factions after the lead (earlier ones have played this
-		// round). Only a human lead without a proxy turn (+798h) forms a group; a lead alone leaves count = 0.
+		// Members: human, not removed (+7A8h), not skipped (+894h), not AI-driven (+895h, dropped player), no
+		// revolution pending (+798h: it plays alone, so the vanilla proxy turn runs; a member's revolution starts in
+		// its turn start in GroupStart, after the group was formed), alive, not in played[], not at war with any
+		// member; only factions after the lead (earlier ones have played this round). Only a human lead without a
+		// proxy turn (+798h) forms a group; a lead alone leaves count = 0.
 		uint at = a.Here;
 		a.Raw(0x53);                                      // push ebx
 		a.Raw(0x56);                                      // push esi
@@ -1126,6 +1154,8 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x80, 0xBE, 0x94, 0x08, 0x00, 0x00, 0x00);  // cmp byte ptr [esi+894h],0 (skipped in turn order)
 		a.J8(0x75, "scan");                               // jne scan
 		a.Raw(0x80, 0xBE, 0x95, 0x08, 0x00, 0x00, 0x00);  // cmp byte ptr [esi+895h],0 (no player: AI ends its turn)
+		a.J8(0x75, "scan");                               // jne scan
+		a.Raw(0x80, 0xBE, 0x98, 0x07, 0x00, 0x00, 0x00);  // cmp byte ptr [esi+798h],0 (a revolution pending)
 		a.J8(0x75, "scan");                               // jne scan
 		a.Raw(0x8B, 0xCE);                                // mov ecx,esi
 		a.Call(FactionIsDead);
@@ -1185,9 +1215,11 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
-	static uint EmitGroupStart(Asm a, uint groupBuild) {
+	static uint EmitGroupStart(Asm a, uint groupBuild, uint log) {
 		// thiscall(world): GroupBuild, then the faction turn start FUN_105fd090 (movement points, FactionTurnStart,
-		// ...) for the lead and then every other member
+		// ...) for the lead and then every other member. A member's turn start may begin a revolution (+798h, per
+		// force FUN_10871e60 -> FUN_105f7160): only the lead's proxy turn runs (FUN_1070b4a0), so that is logged and
+		// GroupBuild leaves the member out of its next group.
 		uint at = a.Here;
 		a.Raw(0x53);                                      // push ebx
 		a.Raw(0x57);                                      // push edi
@@ -1201,6 +1233,13 @@ public static class SharedTurnsPatcher {
 		a.J8(0x73, "done");                               // jae done
 		a.Raw(0x8B, 0x4C, 0xBB, 0x34);                    // mov ecx,[ebx+edi*4+34h]
 		a.Call(FactionTurnStart);
+		a.Raw(0x8B, 0x4C, 0xBB, 0x34);                    // mov ecx,[ebx+edi*4+34h]
+		a.Raw(0x80, 0xB9, 0x98, 0x07, 0x00, 0x00, 0x00);  // cmp byte ptr [ecx+798h],0
+		a.J8(0x74, "norevolt");                           // je norevolt
+		a.Raw(0x6A, 0x00);                                // push 0
+		a.Raw(0x51);                                      // push ecx
+		CallLog(a, log, LogRevolt);
+		a.Mark("norevolt");
 		a.Raw(0x47);                                      // inc edi
 		a.J8(0xEB, "starts");                             // jmp starts
 		a.Mark("done");
@@ -1422,7 +1461,7 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
-	static uint EmitGroupTick(Asm a, uint groupEndTurn, uint groupBuild, uint log) {
+	static uint EmitGroupTick(Asm a, uint groupEndTurn, uint groupBuild, uint groupRestore, uint log) {
 		// campaign tick FUN_10703ea0, replaces "cmp byte [ebx+155Fh],0 / je 10704216" at 107041CA (the +155Fh
 		// retry; ebx = campaign). While a group plays (current = lead, phase 1):
 		//   1. members whose player dropped (+895h) or that were removed (+7A8h) count as ended (vanilla's auto-end
@@ -1430,11 +1469,13 @@ public static class SharedTurnsPatcher {
 		//   2. latched members: retry CanEndTurn, then end them (GroupEndTurn with flag 1, as vanilla's retry);
 		//   3. every member ended: the lead's real end turn FUN_106a5da0(lead, 1), retried each tick until
 		//      CanEndTurn passes.
-		// First the rebuild after a load: the group isn't in the save, and a save made during a turn (resyncs too:
-		// they reload on every PC) has campaign+151Ch = 0, so the tick doesn't repeat the turn start (members[0] is
-		// 0 only between a campaign's construction and its first group start). Every member's turn start ran before
-		// the save (GroupStart runs them all before the transition's autosave FUN_106d5bc0), so only the group is
-		// rebuilt; who had ended must end again. In phase 2 or later (a resync after the lead's end) everyone had.
+		// First the rebuild after a load: a save made during a turn (resyncs too: they reload on every PC) has
+		// campaign+151Ch = 0, so the tick doesn't repeat the turn start (members[0] is 0 only between a campaign's
+		// construction and its first group start). Every member's turn start ran before the save (GroupStart runs
+		// them all before the transition's autosave FUN_106d5bc0), so only the group comes back: from the save
+		// (GroupRestore: members, ended, latch, played[]), or for a save without it (an older build, the unmodded
+		// game) rebuilt by GroupBuild, where who had ended must end again. In phase 2 or later (a resync after the
+		// lead's end) everyone had.
 		uint at = a.Here;
 		a.Raw(0x60);                                      // pushad
 		EmitGroupPtr(a, 7, GroupVa);                      // edi = &group
@@ -1442,10 +1483,15 @@ public static class SharedTurnsPatcher {
 		a.J8(0x75, "built");                              // jne built
 		a.Raw(0x80, 0xBB, 0x1C, 0x15, 0x00, 0x00, 0x00);  // cmp byte ptr [ebx+151Ch],0
 		a.J8(0x75, "built");                              // jne built               (the turn start below: GroupStartLoad)
+		a.Raw(0x8B, 0x8B, 0x98, 0x14, 0x00, 0x00);        // mov ecx,[ebx+1498h]     (world)
+		a.Call(groupRestore);
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J8(0x75, "restored");                           // jne restored
 		a.Raw(0x6A, 0x00, 0x6A, 0x00);                    // push 0 / push 0
 		CallLog(a, log, LogLoadSave);
 		a.Raw(0x8B, 0x8B, 0x98, 0x14, 0x00, 0x00);        // mov ecx,[ebx+1498h]     (world)
 		a.Call(groupBuild);
+		a.Mark("restored");
 		a.Raw(0x8B, 0x83, 0x98, 0x14, 0x00, 0x00);        // mov eax,[ebx+1498h]
 		a.Raw(0x83, 0x78, 0x50, 0x02);                    // cmp dword ptr [eax+50h],2 (phase)
 		a.J8(0x72, "built");                              // jb built
@@ -1544,6 +1590,252 @@ public static class SharedTurnsPatcher {
 		a.Jmp(0x10704216);
 		a.Mark("latched");
 		a.Jmp(0x107041D3);
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitFactionAt(Asm a) {
+		// eax = list position + 1 (0 = none), ebp = world -> eax = that faction of the list [world+44h] (count
+		// [world+40h]), 0 for 0 or out of range; changes ecx and the flags
+		uint at = a.Here;
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "out");                                // je out
+		a.Raw(0x3B, 0x45, 0x40);                          // cmp eax,[ebp+40h]
+		a.J8(0x77, "none");                               // ja none
+		a.Raw(0x8B, 0x4D, 0x44);                          // mov ecx,[ebp+44h]
+		a.Raw(0x8B, 0x44, 0x81, 0xFC);                    // mov eax,[ecx+eax*4-4]
+		a.Raw(0xC3);                                      // ret
+		a.Mark("none");
+		a.Raw(0x33, 0xC0);                                // xor eax,eax
+		a.Mark("out");
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	// esi = value index -> the name "s2st_" + ('a' + index) at [esp+text] and its name object at [esp+obj] (+0 and +4
+	// the length 6, +8 the text, +0Ch NameHash); changes eax, ecx, edx
+	static void EmitSaveName(Asm a, byte obj, byte text) {
+		a.Raw(0xC7, 0x44, 0x24, text, 0x73, 0x32, 0x73, 0x74);   // mov dword ptr [esp+text],'s2st'
+		a.Raw(0x8D, 0x46, 0x61);                          // lea eax,[esi+61h]       ('a' + index)
+		a.Raw(0xC1, 0xE0, 0x08);                          // shl eax,8
+		a.Raw(0xB0, 0x5F);                                // mov al,5Fh              ('_', the letter, two zero bytes)
+		a.Raw(0x89, 0x44, 0x24, (byte)(text + 4));        // mov [esp+text+4],eax
+		a.Raw(0xC7, 0x44, 0x24, obj, 0x06, 0x00, 0x00, 0x00);   // mov dword ptr [esp+obj],6
+		a.Raw(0xC7, 0x44, 0x24, (byte)(obj + 4), 0x06, 0x00, 0x00, 0x00);   // mov dword ptr [esp+obj+4],6
+		a.Raw(0x8D, 0x44, 0x24, text);                    // lea eax,[esp+text]
+		a.Raw(0x89, 0x44, 0x24, (byte)(obj + 8));         // mov [esp+obj+8],eax
+		a.Raw(0x50);                                      // push eax
+		a.Call(NameHash);
+		a.Raw(0x89, 0x44, 0x24, (byte)(obj + 0x0C));      // mov [esp+obj+0Ch],eax
+	}
+
+	static uint EmitSaveGroup(Asm a, uint log) {
+		// cdecl(event*), replaces "call FUN_10be0350" (EventDispatch) at 1066CCDC in the campaign save FUN_1066b760
+		// (only caller FUN_106f7740: every save, autosaves and resyncs too): SavingGame, payload +10h = the
+		// SCRIPT_VARIABLES record (the Lua save_named_value store). After the scripts' values, GroupVa's 21 dwords
+		// go in as named numbers "s2st_a".."s2st_u" (ESF int32): factions as list position + 1 (0 = none), +0Ch (the
+		// mover-owner scratch) as SaveVersion. Children are found by name, so the scripts never see them.
+		uint at = a.Here;
+		a.Raw(0xFF, 0x74, 0x24, 0x04);                    // push dword ptr [esp+4]  (event)
+		a.Call(EventDispatch);
+		a.Raw(0x83, 0xC4, 0x04);                          // add esp,4
+		a.Raw(0x60);                                      // pushad
+		a.Raw(0x8B, 0x44, 0x24, 0x24);                    // mov eax,[esp+24h]       (event)
+		a.Raw(0x8B, 0x78, 0x10);                          // mov edi,[eax+10h]       (the record)
+		EmitGroupPtr(a, 0, UiGlobal);                     // eax = &ui
+		a.Raw(0x8B, 0x00);                                // mov eax,[eax]
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J32("out", 0x0F, 0x84);                         // je out
+		a.Raw(0x8B, 0x80, 0x98, 0x0A, 0x00, 0x00);        // mov eax,[eax+0A98h]     (model)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J32("out", 0x0F, 0x84);                         // je out
+		a.Raw(0x8B, 0x40, 0x08);                          // mov eax,[eax+8]         (campaign)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J32("out", 0x0F, 0x84);                         // je out
+		a.Raw(0x8B, 0xA8, 0x98, 0x14, 0x00, 0x00);        // mov ebp,[eax+1498h]     (world)
+		a.Raw(0x85, 0xED);                                // test ebp,ebp
+		a.J32("out", 0x0F, 0x84);                         // je out
+		EmitGroupPtr(a, 3, GroupVa);                      // ebx = &group
+		a.Raw(0x83, 0xEC, 0x40);                          // sub esp,40h  (name object +0, child +10h, text +30h, type +38h, value +3Ch)
+		a.Raw(0x33, 0xF6);                                // xor esi,esi
+		a.Mark("value");
+		a.Raw(0x8B, 0x04, 0xB3);                          // mov eax,[ebx+esi*4]
+		a.Raw(0x83, 0xFE, 0x03);                          // cmp esi,3
+		a.J8(0x75, "notver");                             // jne notver
+		a.Raw(0xB8); D32(a, SaveVersion);                 // mov eax,SaveVersion
+		a.Mark("notver");
+		a.Raw(0x83, 0xFE, 0x05);                          // cmp esi,5
+		a.J8(0x72, "put");                                // jb put                  (not a faction)
+		a.Raw(0x8B, 0x4D, 0x40);                          // mov ecx,[ebp+40h]       (count)
+		a.Raw(0x8B, 0x55, 0x44);                          // mov edx,[ebp+44h]       (list)
+		a.Mark("find");
+		a.Raw(0x85, 0xC9);                                // test ecx,ecx
+		a.J8(0x74, "found");                              // je found                (0 or not in the list: 0)
+		a.Raw(0x39, 0x44, 0x8A, 0xFC);                    // cmp [edx+ecx*4-4],eax
+		a.J8(0x74, "found");                              // je found
+		a.Raw(0x49);                                      // dec ecx
+		a.J8(0xEB, "find");                               // jmp find
+		a.Mark("found");
+		a.Raw(0x8B, 0xC1);                                // mov eax,ecx             (list position + 1)
+		a.Mark("put");
+		a.Raw(0x89, 0x44, 0x24, 0x3C);                    // mov [esp+3Ch],eax
+		EmitSaveName(a, 0x00, 0x30);
+		a.Raw(0x8B, 0xC4);                                // mov eax,esp             (&name)
+		a.Raw(0x8D, 0x4C, 0x24, 0x10);                    // lea ecx,[esp+10h]       (child)
+		a.Raw(0x6A, 0x00);                                // push 0
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0x57);                                      // push edi
+		a.Call(EsfChildOpen);
+		a.Raw(0xC7, 0x44, 0x24, 0x38, 0x01, 0x00, 0x00, 0x00);   // mov dword ptr [esp+38h],1 (number)
+		a.Raw(0x8D, 0x44, 0x24, 0x38);                    // lea eax,[esp+38h]
+		a.Raw(0x8D, 0x4C, 0x24, 0x10);                    // lea ecx,[esp+10h]
+		a.Raw(0x50);                                      // push eax
+		a.Call(EsfPutType);
+		a.Raw(0x8D, 0x44, 0x24, 0x3C);                    // lea eax,[esp+3Ch]
+		a.Raw(0x8D, 0x4C, 0x24, 0x10);                    // lea ecx,[esp+10h]
+		a.Raw(0x50);                                      // push eax
+		a.Call(EsfPutInt);
+		a.Raw(0x8D, 0x4C, 0x24, 0x10);                    // lea ecx,[esp+10h]
+		a.Call(EsfChildClose);
+		a.Raw(0x46);                                      // inc esi
+		a.Raw(0x83, 0xFE, (byte)SaveValues);              // cmp esi,SaveValues
+		a.J32("value", 0x0F, 0x82);                       // jb value
+		a.Raw(0x83, 0xC4, 0x40);                          // add esp,40h
+		a.Raw(0xFF, 0x33);                                // push dword ptr [ebx]    (count)
+		a.Raw(0xFF, 0x73, 0x34);                          // push dword ptr [ebx+34h] (lead)
+		CallLog(a, log, LogSaveGroup);
+		a.Mark("out");
+		a.Raw(0x61);                                      // popad
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitLoadGroup(Asm a) {
+		// cdecl(event*), replaces "call FUN_10be0350" at 106559A7 in the campaign load FUN_10652870 (only caller the
+		// load constructor FUN_106463e0, after its CampaignReset): LoadingGame, payload +10h = the SCRIPT_VARIABLES
+		// record being read. After the scripts, reads SaveGroup's "s2st_a".."s2st_u" into SaveBufVa; SaveLoadedVa = 1
+		// only when every one is there as a number and the version matches (a save from an older build or the
+		// unmodded game has none). GroupTick's rebuild on the first tick uses them (GroupRestore).
+		uint at = a.Here;
+		a.Raw(0xFF, 0x74, 0x24, 0x04);                    // push dword ptr [esp+4]  (event)
+		a.Call(EventDispatch);
+		a.Raw(0x83, 0xC4, 0x04);                          // add esp,4
+		a.Raw(0x60);                                      // pushad
+		a.Raw(0x8B, 0x44, 0x24, 0x24);                    // mov eax,[esp+24h]       (event)
+		a.Raw(0x8B, 0x78, 0x10);                          // mov edi,[eax+10h]       (the record)
+		EmitGroupPtr(a, 3, SaveLoadedVa);                 // ebx = &saveLoaded (the values follow at +4)
+		a.Raw(0xC7, 0x03, 0x00, 0x00, 0x00, 0x00);        // mov dword ptr [ebx],0
+		a.Raw(0x83, 0xEC, 0x70);                          // sub esp,70h  (name object +0, child +10h, text +58h, type +60h, value +64h)
+		a.Raw(0x33, 0xF6);                                // xor esi,esi
+		a.Mark("value");
+		EmitSaveName(a, 0x00, 0x58);
+		a.Raw(0x8B, 0xC4);                                // mov eax,esp             (&name)
+		a.Raw(0x8B, 0xCF);                                // mov ecx,edi             (the record)
+		a.Raw(0x50);                                      // push eax
+		a.Call(EsfHas);
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J32("done", 0x0F, 0x84);                        // je done
+		a.Raw(0x8B, 0xC4);                                // mov eax,esp
+		a.Raw(0x8D, 0x4C, 0x24, 0x10);                    // lea ecx,[esp+10h]       (child)
+		a.Raw(0x50);                                      // push eax                (&name)
+		a.Raw(0x57);                                      // push edi                (the record)
+		a.Call(EsfChildRead);
+		a.Raw(0xC7, 0x44, 0x24, 0x60, 0xFF, 0xFF, 0xFF, 0xFF);   // mov dword ptr [esp+60h],-1
+		a.Raw(0xC7, 0x44, 0x24, 0x64, 0x00, 0x00, 0x00, 0x00);   // mov dword ptr [esp+64h],0
+		a.Raw(0x8D, 0x44, 0x24, 0x60);                    // lea eax,[esp+60h]
+		a.Raw(0x8D, 0x4C, 0x24, 0x10);                    // lea ecx,[esp+10h]
+		a.Raw(0x50);                                      // push eax
+		a.Call(EsfGetType);
+		a.Raw(0x83, 0x7C, 0x24, 0x60, 0x01);              // cmp dword ptr [esp+60h],1 (number)
+		a.J8(0x75, "close");                              // jne close
+		a.Raw(0x8D, 0x44, 0x24, 0x64);                    // lea eax,[esp+64h]
+		a.Raw(0x8D, 0x4C, 0x24, 0x10);                    // lea ecx,[esp+10h]
+		a.Raw(0x50);                                      // push eax
+		a.Call(EsfGetInt);
+		a.Mark("close");
+		a.Raw(0x8D, 0x4C, 0x24, 0x10);                    // lea ecx,[esp+10h]
+		a.Call(EsfChildEnd);
+		a.Raw(0x83, 0x7C, 0x24, 0x60, 0x01);              // cmp dword ptr [esp+60h],1
+		a.J8(0x75, "done");                               // jne done
+		a.Raw(0x8B, 0x44, 0x24, 0x64);                    // mov eax,[esp+64h]
+		a.Raw(0x89, 0x44, 0xB3, 0x04);                    // mov [ebx+esi*4+4],eax
+		a.Raw(0x46);                                      // inc esi
+		a.Raw(0x83, 0xFE, (byte)SaveValues);              // cmp esi,SaveValues
+		a.J32("value", 0x0F, 0x82);                       // jb value
+		a.Raw(0x83, 0x7B, 0x10, (byte)SaveVersion);       // cmp dword ptr [ebx+10h],SaveVersion (value 3)
+		a.J8(0x75, "done");                               // jne done
+		a.Raw(0xC7, 0x03, 0x01, 0x00, 0x00, 0x00);        // mov dword ptr [ebx],1
+		a.Mark("done");
+		a.Raw(0x83, 0xC4, 0x70);                          // add esp,70h
+		a.Raw(0x61);                                      // popad
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitGroupRestore(Asm a, uint factionAt, uint log) {
+		// thiscall(world) -> al = 1 when the group came back from the save (LoadGroup at this load), keeps
+		// ebx/esi/edi/ebp. Only when the saved lead is the current faction [world+2Ch] (it is for every save:
+		// GroupStart runs before the transition's autosave and members[0] stays the lead until the next group start)
+		// and the counts fit; else al = 0 and GroupTick rebuilds the group with GroupBuild. Brings back the members,
+		// who had ended or asked to end early, and played[] (the picker skips them for the rest of the round), with
+		// no war test: members who went to war during the shared turn stay in it.
+		uint at = a.Here;
+		a.Raw(0x53);                                      // push ebx
+		a.Raw(0x56);                                      // push esi
+		a.Raw(0x57);                                      // push edi
+		a.Raw(0x55);                                      // push ebp
+		a.Raw(0x8B, 0xE9);                                // mov ebp,ecx             (world)
+		EmitGroupPtr(a, 7, SaveLoadedVa);                 // edi = &saveLoaded (the values at +4)
+		a.Raw(0x33, 0xC0);                                // xor eax,eax
+		a.Raw(0x39, 0x07);                                // cmp [edi],eax
+		a.J8(0x74, "no");                                 // je no
+		a.Raw(0x89, 0x07);                                // mov [edi],eax           (used once)
+		a.Raw(0x83, 0x7F, 0x04, 0x08);                    // cmp dword ptr [edi+4],8 (count)
+		a.J8(0x77, "no");                                 // ja no
+		a.Raw(0x83, 0x7F, 0x14, 0x08);                    // cmp dword ptr [edi+14h],8 (played count)
+		a.J8(0x77, "no");                                 // ja no
+		a.Raw(0x8B, 0x47, 0x38);                          // mov eax,[edi+38h]       (members[0])
+		a.Call(factionAt);
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "no");                                 // je no
+		a.Raw(0x3B, 0x45, 0x2C);                          // cmp eax,[ebp+2Ch]
+		a.J8(0x75, "no");                                 // jne no
+		EmitGroupPtr(a, 3, GroupVa);                      // ebx = &group
+		a.Raw(0x33, 0xF6);                                // xor esi,esi
+		a.Mark("copy");
+		a.Raw(0x8B, 0x44, 0xB7, 0x04);                    // mov eax,[edi+esi*4+4]
+		a.Raw(0x83, 0xFE, 0x03);                          // cmp esi,3
+		a.J8(0x75, "notver");                             // jne notver
+		a.Raw(0x33, 0xC0);                                // xor eax,eax             (+0Ch: the mover-owner scratch)
+		a.Mark("notver");
+		a.Raw(0x83, 0xFE, 0x05);                          // cmp esi,5
+		a.J8(0x72, "put");                                // jb put                  (not a faction)
+		a.Call(factionAt);
+		a.Mark("put");
+		a.Raw(0x89, 0x04, 0xB3);                          // mov [ebx+esi*4],eax
+		a.Raw(0x46);                                      // inc esi
+		a.Raw(0x83, 0xFE, (byte)SaveValues);              // cmp esi,SaveValues
+		a.J8(0x72, "copy");                               // jb copy
+		a.Raw(0x33, 0xC0);                                // xor eax,eax
+		a.Raw(0x89, 0x43, (byte)(PfCountVa - GroupVa));   // mov [ebx+60h],eax       (pfCount, as GroupBuild)
+		EmitGroupPtr(a, 2, LogCloseWaitVa);               // edx = &closeWaitLogged
+		a.Raw(0x89, 0x02);                                // mov [edx],eax
+		a.Raw(0xFF, 0x33);                                // push dword ptr [ebx]    (count)
+		a.Raw(0xFF, 0x73, 0x34);                          // push dword ptr [ebx+34h] (lead)
+		CallLog(a, log, LogLoadGroup);
+		a.Raw(0xB0, 0x01);                                // mov al,1
+		a.J8(0xEB, "out");                                // jmp out
+		a.Mark("no");
+		a.Raw(0x33, 0xC0);                                // xor eax,eax
+		a.Mark("out");
+		a.Raw(0x5D);                                      // pop ebp
+		a.Raw(0x5F);                                      // pop edi
+		a.Raw(0x5E);                                      // pop esi
+		a.Raw(0x5B);                                      // pop ebx
+		a.Raw(0xC3);                                      // ret
 		a.Resolve();
 		return at;
 	}
@@ -2812,6 +3104,7 @@ public static class SharedTurnsPatcher {
 		ReserveDataDword(LogOpenedVa);
 		ReserveDataDword(LogCloseWaitVa);
 		ReserveDataDword(PfLastDword);
+		ReserveDataDword(SaveLastDword);
 		uint groupSlot = Sym("GroupSlot", EmitGroupSlot(s));
 		uint groupAllows = Sym("GroupAllows", EmitGroupAllows(s, groupSlot));   // also EqCurF: same arguments as FUN_105870b0(cur, f)
 		uint neqCurF = Sym("NeqCurF", EmitNeqCurF(s, groupAllows));
@@ -2825,13 +3118,15 @@ public static class SharedTurnsPatcher {
 		uint latchEq = Sym("LatchEq", EmitLatchEq(s, groupSlot, log));
 		uint zeroGroup = Sym("ZeroGroup", EmitZeroGroup(s));
 		uint groupBuild = Sym("GroupBuild", EmitGroupBuild(s, log));
-		uint groupStart = Sym("GroupStart", EmitGroupStart(s, groupBuild));
+		uint groupStart = Sym("GroupStart", EmitGroupStart(s, groupBuild, log));
 		uint groupStartLoad = Sym("GroupStartLoad", EmitGroupStartLoad(s, groupStart, log));
 		uint groupTurnEnd = Sym("GroupTurnEnd", EmitGroupTurnEnd(s, log));
 		uint pickerSkip = Sym("PickerSkip", EmitPickerSkip(s, log));
 		uint newRound = Sym("NewRound", EmitNewRound(s, log));
 		uint groupEndTurn = Sym("GroupEndTurn", EmitGroupEndTurn(s, groupSlot, log));
-		uint groupTick = Sym("GroupTick", EmitGroupTick(s, groupEndTurn, groupBuild, log));
+		uint factionAt = Sym("FactionAt", EmitFactionAt(s));
+		uint groupRestore = Sym("GroupRestore", EmitGroupRestore(s, factionAt, log));
+		uint groupTick = Sym("GroupTick", EmitGroupTick(s, groupEndTurn, groupBuild, groupRestore, log));
 
 		// campaign constructors FUN_106463e0 (edi = campaign) and FUN_10649180 (load, ebx = campaign)
 		uint resetNew = Sym("CampaignReset", EmitCampaignReset(s, zeroGroup, 0x87, 0x00, 0x10646DD3, log, LogResetNew));
@@ -2854,6 +3149,10 @@ public static class SharedTurnsPatcher {
 		RedirectCall(0x1088655A, IsEqual, latchEq);
 		ExpectBytes(0x107041CA, 0x80, 0xBB, 0x5F, 0x15, 0x00, 0x00, 0x00, 0x74, 0x43);
 		PutJmp(0x107041CA, groupTick, 9);
+		// milestone 4: the group goes into every campaign save, after the scripts' SavingGame values, and comes back
+		// at load (LoadGroup after LoadingGame, then GroupRestore in GroupTick's rebuild)
+		RedirectCall(0x1066CCDC, EventDispatch, Sym("SaveGroup", EmitSaveGroup(s, log)));
+		RedirectCall(0x106559A7, EventDispatch, Sym("LoadGroup", EmitLoadGroup(s)));
 		// simulation guards
 		RedirectCall(0x106AA5E8, IsNotEqual, neqCurF);      // FUN_106aa590 CanEndTurn core (proxy branch)
 		RedirectCall(0x106AA5FE, IsNotEqual, neqCurF);      // FUN_106aa590 CanEndTurn core

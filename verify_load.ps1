@@ -63,7 +63,7 @@ if ((Hex $start) -ne '9C 60' -or -not $hasName) { $ok = $false }
 $hooks = @(
 	@(0x10646DCA, 'group reset new'), @(0x10649B33, 'group reset load'), @(0x10701DB0, 'group start'), @(0x10704313, 'group start load'),
 	@(0x106A5FD9, 'group turn end'), @(0x106A603B, 'picker skip'), @(0x106A609E, 'new round'), @(0x10886507, 'end turn command'),
-	@(0x1070420A, 'end turn latch'), @(0x1088655A, 'member latch'), @(0x107041CA, 'group tick'),
+	@(0x1070420A, 'end turn latch'), @(0x1088655A, 'member latch'), @(0x107041CA, 'group tick'), @(0x1066CCDC, 'save group'), @(0x106559A7, 'load group'),
 	@(0x106AA5E8, 'can end turn 1'), @(0x106AA5FE, 'can end turn 2'), @(0x106AA6AB, 'mover allowed 1'), @(0x106AA777, 'mover allowed 2'),
 	@(0x106AA89F, 'action allowed'), @(0x106E4F73, 'attack allowed'), @(0x108FFE3B, 'mover owner'), @(0x108FFEC8, 'resume orders 1'),
 	@(0x108FFEF4, 'resume orders 2'), @(0x108FFF4A, 'resume orders 3'), @(0x106EC0E0, 'char moved'), @(0x106C5A84, 'order notify'),
