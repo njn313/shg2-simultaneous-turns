@@ -213,7 +213,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.11 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
+	const string LogBuildTag = "shared turns 0.12 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -2228,6 +2228,49 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
+	static uint EmitOpenNegotiationsGate(Asm a, uint groupSlot, uint foreignPending, uint log) {
+		// jumped to from 111D7230, the entry of the diplomacy panel's OpenNegotiations FUN_111d7230 (thiscall(panel; x)
+		// ret 4, returns 0): the relations list's "start negotiations" button, which hides the list and calls the
+		// panel's Lua Initialise(faction). The panel can be open on the relations list while another member's
+		// negotiation or popup becomes pending; then (same test as UiNegotiationGate) the click does nothing and the
+		// list stays, instead of a negotiation view without a negotiation (no buttons, Cancel stops on the nil
+		// negotiation in its Lua). entry: ecx = the panel; eax, edx are free.
+		uint at = a.Here;
+		a.Raw(0x51);                                      // push ecx                (the panel)
+		EmitGroupPtr(a, 0, UiGlobal);                     // eax = &ui
+		a.Raw(0x8B, 0x00);                                // mov eax,[eax]
+		a.Raw(0x8B, 0x80, 0x98, 0x0A, 0x00, 0x00);        // mov eax,[eax+0A98h]     (model)
+		a.Raw(0xFF, 0xB0, 0xB0, 0x00, 0x00, 0x00);        // push dword ptr [eax+0B0h] (f = local)
+		a.Raw(0x8B, 0x40, 0x08);                          // mov eax,[eax+8]         (campaign)
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0x8B, 0x80, 0x98, 0x14, 0x00, 0x00);        // mov eax,[eax+1498h]     (world)
+		a.Raw(0x8B, 0x48, 0x2C);                          // mov ecx,[eax+2Ch]       (cur)
+		a.Call(groupSlot);                                // eax = cur's slot, edx = &group
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x75, "pass");                               // jnz pass                (cur isn't the lead of a group)
+		a.Raw(0x83, 0x3A, 0x02);                          // cmp dword ptr [edx],2
+		a.J8(0x72, "pass");                               // jb pass                 (no group running)
+		a.Call(foreignPending);                           // (campaign, local)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "pass");                               // jz pass
+		a.Raw(0x8B, 0x44, 0x24, 0x04);                    // mov eax,[esp+4]         (local)
+		a.Raw(0x89, 0x04, 0x24);                          // mov [esp],eax           (Log pops id and two arguments: local, local)
+		CallLog(a, log, LogNegotiationUiBlocked);
+		a.Raw(0x59);                                      // pop ecx
+		a.Raw(0x33, 0xC0);                                // xor eax,eax
+		a.Raw(0xC2, 0x04, 0x00);                          // ret 4
+		a.Mark("pass");
+		a.Raw(0x83, 0xC4, 0x08);                          // add esp,8
+		a.Raw(0x59);                                      // pop ecx                 (the panel)
+		a.Raw(0x83, 0xEC, 0x54);                          // sub esp,54h             (replaced)
+		a.Raw(0x53);                                      // push ebx                (replaced)
+		a.Raw(0x56);                                      // push esi                (replaced)
+		a.Raw(0x8B, 0xF1);                                // mov esi,ecx             (replaced)
+		a.Jmp(0x111D7237);
+		a.Resolve();
+		return at;
+	}
+
 	static uint EmitPfTurnStart(Asm a, uint pfFocusFor) {
 		// replaces "call FUN_106fa800" at 105FD550 in the faction turn start FUN_105fd090 (ebx = the faction starting,
 		// ecx = campaign = [[ebx+8Ch]+8]): after the vanilla set-up for the current faction, set the pathfinder up for
@@ -2887,6 +2930,8 @@ public static class SharedTurnsPatcher {
 		RedirectCall(0x11143D98, CurrentOrProxyFn, demandActor);
 		RedirectCall(0x111798B2, CurrentOrProxyFn, demandActor);
 		RedirectCall(0x11152230, 0x1110E1B0, Sym("UiNegotiationGate", EmitUiNegotiationGate(s, groupSlot, foreignPending, log)));
+		ExpectBytes(0x111D7230, 0x83, 0xEC, 0x54, 0x53, 0x56, 0x8B, 0xF1);
+		PutJmp(0x111D7230, Sym("OpenNegotiationsGate", EmitOpenNegotiationsGate(s, groupSlot, foreignPending, log)), 7);
 
 		// Fix 5: a member's turn start (new units walking to their general, character resets) runs with the member's
 		// pathfinder set-up; the group start ends with the turn's set-up again

@@ -79,7 +79,7 @@ $hooks = @(
 	@(0x1104EBC0, 'message log'),
 	@(0x11122988, 'ui turn gate'), @(0x11142F57, 'save message'), @(0x1122FF86, 'clan button'), @(0x112457A9, 'unit panel 1'),
 	@(0x1124ED39, 'unit panel 2'), @(0x1125458A, 'unit panel 3'), @(0x11254772, 'unit panel 4'), @(0x11143D98, 'demand surrender 1'),
-	@(0x111798B2, 'demand surrender 2'), @(0x11152230, 'ui negotiation'))
+	@(0x111798B2, 'demand surrender 2'), @(0x11152230, 'ui negotiation'), @(0x111D7230, 'open negotiations'))
 # the desync fixes: this mod's on the original, the 8-player mod's own (in .s2mp) on top of it
 $desync = @(
 	@(0x100B190C, 'frame fp pin'), @(0x10227D40, 'tick fp pin'), @(0x10EE9A71, 'battle no-kick'), @(0x10EF9A87, 'report no-kick'),
