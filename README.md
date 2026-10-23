@@ -38,8 +38,8 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game | `BFE11CE97B02805DEEABE6C0105404F93E709D0198F5CBF361E4571584B559B7` |
-| the 8-player co-op mod v1.4 | `52EDB3F3DCB5502EAD07E532692C911D0617B2AA9B98BCAA9A477DFBD874CA0D` |
+| the original game | `225DB30E1BFCD429D241D991B9E943F8AA8D21559814EBD9133F61BBD0D0216A` |
+| the 8-player co-op mod v1.4 | `521F8B9154D7A117247EA9C6A70E8FF7E644386C55D6E29C095ACCB8E18BE796` |
 
 So either everyone has the 8-player mod, or nobody does.
 

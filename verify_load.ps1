@@ -85,7 +85,8 @@ $desync = @(
 	@(0x100B190C, 'frame fp pin'), @(0x10227D40, 'tick fp pin'), @(0x10EE9A71, 'battle no-kick'), @(0x10EF9A87, 'report no-kick'),
 	@(0x10F05914, 'auto resync'), @(0x10F10E2D, 'forced resync'))
 $on8p = $secs.ContainsKey('.s2mp')
-if (-not $on8p) { $hooks += $desync + @(@(0x10EF9AC1, 'log host kick'), @(0x10EF9AD1, 'log leave')) }
+# standalone only, with no counterpart in the 8-player mod
+if (-not $on8p) { $hooks += $desync + @(@(0x10EF9AC1, 'log host kick'), @(0x10EF9AD1, 'log leave'), @(0x10703EA0, 'campaign tick pin')) }
 foreach ($hook in $hooks) {
 	$ins = Mem $hook[0] 5
 	$dest = ([int64]$hook[0] + 5 + [BitConverter]::ToInt32($ins, 1)) -band 0xFFFFFFFF

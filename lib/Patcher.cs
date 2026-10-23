@@ -213,7 +213,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.15 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume / resync key log)";
+	const string LogBuildTag = "shared turns 0.16 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume / resync key log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -274,7 +274,7 @@ public static class SharedTurnsPatcher {
 		"DIPLOMACY %f picked a clan in the diplomacy panel while another clan's negotiation or popup is pending: no negotiation opened",   // 46
 		"RESUME %f carries on with a move the battle interrupted",         // 47
 		"!RESYNC Ctrl+Shift+F9 seen: checks %d (1 session, 2 host, 4 resync object: 7 = all passed), resync state %d (0 = idle)",   // 48
-		"!RESYNC key check runs (first frame with a network session), this PC is host: %b",   // 49
+		"!RESYNC key check runs (first campaign tick with a network session), this PC is host: %b",   // 49
 		"!RESYNC F9 pressed: Ctrl held %b, Shift held %b",                 // 50
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
@@ -3017,12 +3017,27 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x83, 0xC4, 0x04);                          // add esp,4
 	}
 
-	static uint EmitFramePin(Asm a, uint log) {
-		// replaces "call FUN_10f36680" (ecx = its this): the resync key, the modes, then tail-call the original
+	static uint EmitFramePin(Asm a) {
+		// replaces "call FUN_10f36680" (ecx = its this): the modes, then tail-call the original. Build 0.15 showed this
+		// call doesn't run on the campaign map (its first-run log line never came), so the campaign tick pins too.
+		uint at = a.Here;
+		EmitPinFloatModes(a);
+		a.Jmp(MultiplayerUpdate);
+		return at;
+	}
+
+	const uint CampaignTick = 0x10703EA0;      // FUN_10703ea0 entry: mov eax,5090h / call __alloca_probe (10 bytes)
+	const uint AllocaProbe = 0x114FC1B0;
+
+	static uint EmitTickPin(Asm a, uint log) {
+		// jumped to from the campaign tick's entry (ecx = campaign, every PC, every tick, any phase): the resync key,
+		// the modes (the campaign simulation starts here), then the replaced prologue
 		uint at = a.Here;
 		EmitResyncKeyPoll(a, log);
 		EmitPinFloatModes(a);
-		a.Jmp(MultiplayerUpdate);
+		a.Raw(0xB8, 0x90, 0x50, 0x00, 0x00);              // mov eax,5090h           (replaced)
+		a.Call(AllocaProbe);                              // call __alloca_probe     (replaced)
+		a.Jmp(CampaignTick + 10);
 		return at;
 	}
 
@@ -3178,12 +3193,22 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
-	// polled once per frame from the frame hook (ebp = owner, [ebp+58h] = session); keeps every register
+	// polled at the start of every campaign tick (TickPin); the session is [model+70h] (as the UI's FUN_106a5b70 finds
+	// it), none in single player; keeps every register
 	static void EmitResyncKeyPoll(Asm a, uint log) {
 		a.Raw(0x60);                                      // pushad
 		a.Raw(0xE8, 0x00, 0x00, 0x00, 0x00);              // call $+5
 		uint popAt = a.Here;
 		a.Raw(0x5E);                                      // pop esi
+		a.Raw(0x8B, 0x86); D32(a, UiGlobal - popAt);              // mov eax,[esi+ui]
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J32("done", 0x0F, 0x84);                        // jz done
+		a.Raw(0x8B, 0x80, 0x98, 0x0A, 0x00, 0x00);        // mov eax,[eax+0A98h]     (model)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J32("done", 0x0F, 0x84);                        // jz done
+		a.Raw(0x8B, 0x68, 0x70);                          // mov ebp,[eax+70h]       (session)
+		a.Raw(0x85, 0xED);                                // test ebp,ebp
+		a.J32("done", 0x0F, 0x84);                        // jz done                 (single player)
 		a.Raw(0x8B, 0x9E); D32(a, GetAsyncKeyStateIat - popAt);   // mov ebx,[esi+iat]
 		a.Raw(0x8D, 0xBE); D32(a, ResyncKeyPrevVa - popAt);       // lea edi,[esi+prev]
 		// log only (test 15: no press was ever logged, 2026-10-23): one line the first time this runs, one per F9 press
@@ -3193,7 +3218,7 @@ public static class SharedTurnsPatcher {
 		a.J8(0x75, "ran");                                // jne ran
 		a.Raw(0xC6, 0x02, 0x01);                          // mov byte ptr [edx],1
 		a.Raw(0x6A, 0x00);                                // push 0
-		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]       (session, set: the call site tests it)
+		a.Raw(0x8B, 0xCD);                                // mov ecx,ebp               (session)
 		a.Call(SessionIsHost);
 		a.Raw(0x0F, 0xB6, 0xC0);                          // movzx eax,al
 		a.Raw(0x50);                                      // push eax
@@ -3231,7 +3256,7 @@ public static class SharedTurnsPatcher {
 		// log every press with the checks below (test 15: a host's press left no RESYNC line, 2026-10-23)
 		a.Raw(0x33, 0xDB);                                // xor ebx,ebx             (checks passed)
 		a.Raw(0x33, 0xF6);                                // xor esi,esi             (resync state)
-		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]       (session)
+		a.Raw(0x8B, 0xCD);                                // mov ecx,ebp               (session)
 		a.Raw(0x85, 0xC9);                                // test ecx,ecx
 		a.J8(0x74, "seen");                               // jz seen
 		a.Raw(0x83, 0xCB, 0x01);                          // or ebx,1
@@ -3240,7 +3265,7 @@ public static class SharedTurnsPatcher {
 		a.J8(0x74, "seen host");                          // jz seen host
 		a.Raw(0x83, 0xCB, 0x02);                          // or ebx,2
 		a.Mark("seen host");
-		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]
+		a.Raw(0x8B, 0xCD);                                // mov ecx,ebp               (session)
 		a.Raw(0x8B, 0x81, 0x78, 0xBE, 0x02, 0x00);        // mov eax,[ecx+2BE78h]    (resync state)
 		a.Raw(0x85, 0xC0);                                // test eax,eax
 		a.J8(0x74, "seen");                               // jz seen
@@ -3250,13 +3275,13 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x56);                                      // push esi
 		a.Raw(0x53);                                      // push ebx
 		CallLog(a, log, LogResyncKeySeen);
-		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]       (session)
+		a.Raw(0x8B, 0xCD);                                // mov ecx,ebp               (session)
 		a.Raw(0x85, 0xC9);                                // test ecx,ecx
 		a.J8(0x74, "done");                               // jz done
 		a.Call(SessionIsHost);
 		a.Raw(0x84, 0xC0);                                // test al,al
 		a.J8(0x74, "done");                               // jz done
-		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]
+		a.Raw(0x8B, 0xCD);                                // mov ecx,ebp               (session)
 		a.Raw(0x8B, 0x81, 0x78, 0xBE, 0x02, 0x00);        // mov eax,[ecx+2BE78h]    (resync state)
 		a.Raw(0x85, 0xC0);                                // test eax,eax
 		a.J8(0x74, "done");                               // jz done
@@ -3270,7 +3295,7 @@ public static class SharedTurnsPatcher {
 		a.Call(StartResync);                              // the host's own resync (popup + auto-accept)
 		a.Raw(0x83, 0x7E, 0x30, 0x00);                    // cmp dword ptr [esi+30h],0
 		a.J8(0x74, "done");                               // je done                 (not on the campaign map)
-		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]
+		a.Raw(0x8B, 0xCD);                                // mov ecx,ebp               (session)
 		a.Raw(0x6A, 0x02);                                // push 2                  (force: everyone else joins)
 		a.Call(SendResyncAnswer);                         // ecx = session
 		a.J8(0xEB, "done");                               // jmp done
@@ -3286,7 +3311,9 @@ public static class SharedTurnsPatcher {
 		ReserveDataDword(ResyncDiagVa);
 		ExpectBytes(SaveScreenLocaleCategory, 0x6A, 0x00, 0xE8);
 		PutBytes(SaveScreenLocaleCategory + 1, new byte[] { 0x05 });
-		RedirectCall(FrameUpdateCall, MultiplayerUpdate, Sym("FramePin", EmitFramePin(s, log)));
+		RedirectCall(FrameUpdateCall, MultiplayerUpdate, Sym("FramePin", EmitFramePin(s)));
+		ExpectBytes(CampaignTick, 0xB8, 0x90, 0x50, 0x00, 0x00, 0xE8, 0x06, 0x83, 0xDF, 0x00);
+		PutJmp(CampaignTick, Sym("TickPin", EmitTickPin(s, log)), 10);
 		ExpectBytes(BattleTickAt, 0xFF, 0x74, 0x24, 0x08, 0x8B, 0x4C, 0x24, 0x10);
 		PutJmp(BattleTickAt, Sym("BattleTickPin", EmitBattleTickPin(s)), 8);
 		ExpectBytes(DesyncKickAt, 0x8B, 0x8F, 0x74, 0xBE, 0x02, 0x00);
