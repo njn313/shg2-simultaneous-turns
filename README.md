@@ -37,16 +37,17 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on, turn mode | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game, hybrid | `8098503C10953D3041CCC55E5AEEE98546895309CAC8112B3E5C827E98C0629D` |
-| the 8-player co-op mod v1.4, hybrid | `A41B0EAC9D8CD509158DDC796009FC162B9C7F5E464DDD7E9958C38CADA9CC76` |
-| the original game, simultaneous | `B3507360A72D5CEE8B407D4B4256AAF5A5A6BC7426AE6316D715738D4E622EC7` |
-| the 8-player co-op mod v1.4, simultaneous | `8069FE689639A76BE863360007582D374F6A0616B5A4D11EB25A33677E6482F1` |
+| the original game, hybrid | `75B2FBF84F33959A3EA19DD297492586D139318FF554010CF1E4AE06E68A4199` |
+| the 8-player co-op mod v1.4, hybrid | `337C19C42621BA3671A523641033E2DA7570808FDC1E7380BCDE888B192349FE` |
+| the original game, simultaneous | `E9F99F9E92BF9D6F927424E62CAFB4CBFBD7249A198612A380DB36CB13D67106` |
+| the 8-player co-op mod v1.4, simultaneous | `941DCD1509C8B0FD4345747250EF5A73AD0D42F7E202467C4A4756CB9E4C196A` |
 
 So either everyone has the 8-player mod, or nobody does, and everyone picks the same turn mode:
 - **hybrid** (default): players who are not at war with each other play at the same time; a player at war with
   another player plays alone, one after the other as in the normal game.
 - **simultaneous**: all players always play at the same time, even at war with each other (they can attack each
-  other's armies during the shared turn; everyone waits for a battle as usual). Not tested in game yet.
+  other's armies during the shared turn; everyone waits for a battle as usual). An attack on an army that has moved
+  away since you ordered it doesn't start a battle: your army stops where the target stood; order the attack again.
 
 To switch the mode, everyone runs `Install.bat` again and picks the new one. For the normal game's turns one after
 the other, uninstall.

@@ -217,7 +217,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.19 (milestones 1, 2 and 3, milestone 4 part 1, turn modes hybrid / simultaneous, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
+	const string LogBuildTag = "shared turns 0.20 (milestones 1, 2 and 3, milestone 4 part 1, turn modes hybrid / simultaneous, no battle with a target that moved away, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -280,6 +280,7 @@ public static class SharedTurnsPatcher {
 		"LOAD the group from the save: lead %f, %d member slots (who had ended and who played this round are kept)",   // 48
 		"REVOLT %f: a revolution started at this member's turn start in a shared turn (it plays its next turn alone)",   // 49
 		"SAVE the group goes into the save: lead %f, %d member slots",     // 50
+		"ATTACK %f reached where the army of %f stood when the attack was ordered, but that army has moved: no battle",   // 51
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
@@ -290,7 +291,7 @@ public static class SharedTurnsPatcher {
 		LogAccessBlocked = 33, LogAccessKept = 34, LogClickPf = 35, LogPendingPush = 36, LogPendingPop = 37,
 		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41, LogLoadSave = 42, LogMessageShow = 43,
 		LogMessageHide = 44, LogNegotiationDropped = 45, LogNegotiationUiBlocked = 46, LogResumeMembers = 47,
-		LogLoadGroup = 48, LogRevolt = 49, LogSaveGroup = 50;
+		LogLoadGroup = 48, LogRevolt = 49, LogSaveGroup = 50, LogAttackMoved = 51;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -747,6 +748,12 @@ public static class SharedTurnsPatcher {
 	const uint SaveLastDword = SaveBufVa + 0x50;
 	const int SaveValues = 0x54 / 4;           // named numbers "s2st_a".."s2st_u" in the save's SCRIPT_VARIABLES record
 	const int SaveVersion = 1;                 // saved in place of +0Ch (the mover-owner scratch)
+	// attacks on an army that moved away (AttackRecord / AttackCheck): +0 next slot, then AttackSlots entries of 18h
+	// bytes: attacker, target, turn, the target's position (3 dwords) when the attack was ordered
+	const uint AttackTableVa = GroupVa + 0xE0;
+	const int AttackSlots = 16;
+	const int AttackDwords = 1 + AttackSlots * 6;
+	const uint AttackLastDword = AttackTableVa + (AttackDwords - 1) * 4;
 	const uint FactionTurnStart = 0x105FD090;  // thiscall(faction)
 	const uint FactionTurnEnd = 0x105B2870;    // thiscall(faction)
 	const uint FactionIsDead = 0x105CB900;     // thiscall(faction) -> al
@@ -761,6 +768,9 @@ public static class SharedTurnsPatcher {
 	const uint OwnerOf = 0x103E5960;           // thiscall(char+254h) -> owning faction
 	const uint EventInit = 0x10BA5980;         // thiscall(event)
 	const uint EventDispatch = 0x10BE0350;     // cdecl(event*)
+	const uint CharPosition = 0x106E5630;      // thiscall(char) -> eax = &its position (12 bytes; the settlement's or fleet's when inside one)
+	const uint AttackPlan = 0x1085A820;        // thiscall(movement; &order context, target, 0, 0) ret 10h: plan an attack on a character
+	const uint BattleStart = 0x106E9F60;       // thiscall(campaign; attacker, target, flag, 0, 0, 0, 0, 0) ret 20h: start a pending battle
 	// the save format (ESF), as the Lua save_named_value / load_named_value bindings FUN_1060e5b0 / FUN_1060e800 use it.
 	// A name object is +0 length, +4 length, +8 the text, +0Ch NameHash(text); the bindings free a heap copy of the
 	// text afterwards, so the save format keeps no pointer to it.
@@ -1083,7 +1093,7 @@ public static class SharedTurnsPatcher {
 	}
 
 	static uint EmitZeroGroup(Asm a) {
-		// clears the whole group state, the pathfinder block and SaveLoadedVa (they would outlive a campaign in the
+		// clears the whole group state, the pathfinder block, SaveLoadedVa and the attack table (they would outlive a campaign in the
 		// same process), not the log's dwords between them; keeps every register. The load constructor FUN_106463e0
 		// runs it (10646DCA) before it reads the save (LoadGroup at 106559A7).
 		uint at = a.Here;
@@ -1099,6 +1109,9 @@ public static class SharedTurnsPatcher {
 		a.Raw(0xF3, 0xAB);                                // rep stosd
 		EmitGroupPtr(a, 7, SaveLoadedVa);                 // edi = &saveLoaded
 		a.Raw(0x89, 0x07);                                // mov [edi],eax
+		EmitGroupPtr(a, 7, AttackTableVa);                // edi = &attackTable
+		a.Raw(0xB9); a.Bytes.AddRange(BitConverter.GetBytes(AttackDwords));   // mov ecx,AttackDwords
+		a.Raw(0xF3, 0xAB);                                // rep stosd
 		a.Raw(0x58);                                      // pop eax
 		a.Raw(0x59);                                      // pop ecx
 		a.Raw(0x5F);                                      // pop edi
@@ -1843,6 +1856,126 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x5E);                                      // pop esi
 		a.Raw(0x5B);                                      // pop ebx
 		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitAttackRecord(Asm a) {
+		// replaces "call FUN_1085a820" (the attack planner, thiscall(movement; &order context, target, 0, 0) ret 10h) at
+		// 10883846 in CCQ_CHARACTER_ATTACK FUN_10883780, after AttackAllowed passed; ebx = campaign. Notes in
+		// AttackTableVa the attacker ([context], the mover the planner uses), the target, the turn and where the target
+		// stands now (FUN_106e5630), for AttackCheck. An attacker's newer order replaces its entry; else the next slot.
+		uint at = a.Here;
+		a.Raw(0x60);                                      // pushad                  (&context at +24h, target at +28h)
+		a.Raw(0x8B, 0x44, 0x24, 0x24);                    // mov eax,[esp+24h]
+		a.Raw(0x8B, 0x30);                                // mov esi,[eax]           (attacker)
+		a.Raw(0x8B, 0x7C, 0x24, 0x28);                    // mov edi,[esp+28h]       (target)
+		a.Raw(0x85, 0xF6);                                // test esi,esi
+		a.J8(0x74, "out");                                // je out
+		a.Raw(0x85, 0xFF);                                // test edi,edi
+		a.J8(0x74, "out");                                // je out
+		EmitGroupPtr(a, 2, AttackTableVa);                // edx = &attackTable
+		a.Raw(0x33, 0xC9);                                // xor ecx,ecx
+		a.Mark("find");
+		a.Raw(0x8D, 0x04, 0x49);                          // lea eax,[ecx+ecx*2]
+		a.Raw(0x8D, 0x44, 0xC2, 0x04);                    // lea eax,[edx+eax*8+4]   (entry ecx)
+		a.Raw(0x39, 0x30);                                // cmp [eax],esi
+		a.J8(0x74, "have");                               // je have                 (this attacker's earlier order)
+		a.Raw(0x41);                                      // inc ecx
+		a.Raw(0x83, 0xF9, (byte)AttackSlots);             // cmp ecx,AttackSlots
+		a.J8(0x72, "find");                               // jb find
+		a.Raw(0x8B, 0x0A);                                // mov ecx,[edx]           (next slot)
+		a.Raw(0x8D, 0x41, 0x01);                          // lea eax,[ecx+1]
+		a.Raw(0x83, 0xE0, (byte)(AttackSlots - 1));       // and eax,AttackSlots-1
+		a.Raw(0x89, 0x02);                                // mov [edx],eax
+		a.Raw(0x8D, 0x04, 0x49);                          // lea eax,[ecx+ecx*2]
+		a.Raw(0x8D, 0x44, 0xC2, 0x04);                    // lea eax,[edx+eax*8+4]
+		a.Mark("have");
+		a.Raw(0x89, 0x30);                                // mov [eax],esi
+		a.Raw(0x89, 0x78, 0x04);                          // mov [eax+4],edi
+		a.Raw(0x8B, 0x8B, 0xA0, 0x14, 0x00, 0x00);        // mov ecx,[ebx+14A0h]     (turn counter object)
+		a.Raw(0x85, 0xC9);                                // test ecx,ecx
+		a.J8(0x74, "turn");                               // jz turn
+		a.Raw(0x8B, 0x49, 0x08);                          // mov ecx,[ecx+8]
+		a.Mark("turn");
+		a.Raw(0x89, 0x48, 0x08);                          // mov [eax+8],ecx
+		a.Raw(0x8B, 0xE8);                                // mov ebp,eax             (entry)
+		a.Raw(0x8B, 0xCF);                                // mov ecx,edi
+		a.Call(CharPosition);
+		a.Raw(0x8B, 0x08);                                // mov ecx,[eax]
+		a.Raw(0x89, 0x4D, 0x0C);                          // mov [ebp+0Ch],ecx
+		a.Raw(0x8B, 0x48, 0x04);                          // mov ecx,[eax+4]
+		a.Raw(0x89, 0x4D, 0x10);                          // mov [ebp+10h],ecx
+		a.Raw(0x8B, 0x48, 0x08);                          // mov ecx,[eax+8]
+		a.Raw(0x89, 0x4D, 0x14);                          // mov [ebp+14h],ecx
+		a.Mark("out");
+		a.Raw(0x61);                                      // popad
+		a.Jmp(AttackPlan);
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitAttackCheck(Asm a, uint log) {
+		// replaces "call FUN_106e9f60" (start a battle, thiscall(campaign; attacker, target, flag, 0, 0, 0, 0, 0)
+		// ret 20h, result unused) at 108A7986 in FUN_108a7920, the attack order's last step (vtable 11621CDC slot
+		// +1Ch), which runs when the attacker reaches the end of its path and starts the battle with the target wherever
+		// it stands now. Vanilla needs no more: the target can't move during the attacker's turn. In a shared turn a
+		// human target can (members at war), so: if AttackRecord noted this attacker and target in this same turn and
+		// the target has moved since, no battle (the attacker stops there; its player can order the attack again).
+		// Orders from an earlier turn (an attack over several turns) or from before a load have no entry: vanilla. The
+		// entry is used once.
+		uint at = a.Here;
+		a.Raw(0x60);                                      // pushad                  (attacker at +24h, target at +28h)
+		a.Raw(0x8B, 0x74, 0x24, 0x24);                    // mov esi,[esp+24h]
+		a.Raw(0x8B, 0x7C, 0x24, 0x28);                    // mov edi,[esp+28h]
+		a.Raw(0x8B, 0xD9);                                // mov ebx,ecx             (campaign)
+		EmitGroupPtr(a, 2, AttackTableVa + 4);            // edx = &entries
+		a.Raw(0x33, 0xC9);                                // xor ecx,ecx
+		a.Mark("find");
+		a.Raw(0x8D, 0x04, 0x49);                          // lea eax,[ecx+ecx*2]
+		a.Raw(0x8D, 0x2C, 0xC2);                          // lea ebp,[edx+eax*8]     (entry ecx)
+		a.Raw(0x39, 0x75, 0x00);                          // cmp [ebp+0],esi
+		a.J8(0x75, "next");                               // jne next
+		a.Raw(0x39, 0x7D, 0x04);                          // cmp [ebp+4],edi
+		a.J8(0x74, "found");                              // je found
+		a.Mark("next");
+		a.Raw(0x41);                                      // inc ecx
+		a.Raw(0x83, 0xF9, (byte)AttackSlots);             // cmp ecx,AttackSlots
+		a.J8(0x72, "find");                               // jb find
+		a.J8(0xEB, "battle");                             // jmp battle              (no entry: vanilla)
+		a.Mark("found");
+		a.Raw(0xC7, 0x45, 0x00, 0x00, 0x00, 0x00, 0x00);  // mov dword ptr [ebp+0],0 (used once)
+		a.Raw(0x8B, 0x83, 0xA0, 0x14, 0x00, 0x00);        // mov eax,[ebx+14A0h]     (turn counter object)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "turn");                               // jz turn
+		a.Raw(0x8B, 0x40, 0x08);                          // mov eax,[eax+8]
+		a.Mark("turn");
+		a.Raw(0x3B, 0x45, 0x08);                          // cmp eax,[ebp+8]
+		a.J8(0x75, "battle");                             // jne battle              (ordered in an earlier turn)
+		a.Raw(0x8B, 0xCF);                                // mov ecx,edi
+		a.Call(CharPosition);
+		a.Raw(0x8B, 0x08);                                // mov ecx,[eax]
+		a.Raw(0x3B, 0x4D, 0x0C);                          // cmp ecx,[ebp+0Ch]
+		a.J8(0x75, "moved");                              // jne moved
+		a.Raw(0x8B, 0x48, 0x04);                          // mov ecx,[eax+4]
+		a.Raw(0x3B, 0x4D, 0x10);                          // cmp ecx,[ebp+10h]
+		a.J8(0x75, "moved");                              // jne moved
+		a.Raw(0x8B, 0x48, 0x08);                          // mov ecx,[eax+8]
+		a.Raw(0x3B, 0x4D, 0x14);                          // cmp ecx,[ebp+14h]
+		a.J8(0x74, "battle");                             // je battle               (it stands where it stood)
+		a.Mark("moved");
+		a.Raw(0x8D, 0x8F, 0x54, 0x02, 0x00, 0x00);        // lea ecx,[edi+254h]
+		a.Call(OwnerOf);
+		a.Raw(0x50);                                      // push eax                (target's faction)
+		a.Raw(0x8D, 0x8E, 0x54, 0x02, 0x00, 0x00);        // lea ecx,[esi+254h]
+		a.Call(OwnerOf);
+		a.Raw(0x50);                                      // push eax                (attacker's faction)
+		CallLog(a, log, LogAttackMoved);
+		a.Raw(0x61);                                      // popad
+		a.Raw(0xC2, 0x20, 0x00);                          // ret 20h                 (no battle)
+		a.Mark("battle");
+		a.Raw(0x61);                                      // popad
+		a.Jmp(BattleStart);
 		a.Resolve();
 		return at;
 	}
@@ -3112,6 +3245,7 @@ public static class SharedTurnsPatcher {
 		ReserveDataDword(LogCloseWaitVa);
 		ReserveDataDword(PfLastDword);
 		ReserveDataDword(SaveLastDword);
+		ReserveDataDword(AttackLastDword);
 		uint groupSlot = Sym("GroupSlot", EmitGroupSlot(s));
 		uint groupAllows = Sym("GroupAllows", EmitGroupAllows(s, groupSlot));   // also EqCurF: same arguments as FUN_105870b0(cur, f)
 		uint neqCurF = Sym("NeqCurF", EmitNeqCurF(s, groupAllows));
@@ -3269,6 +3403,10 @@ public static class SharedTurnsPatcher {
 
 		// Milestone 3: after a battle the members' interrupted moves carry on too, not only the current faction's
 		RedirectCall(0x10607876, CurrentOrProxy, Sym("ResumeMembers", EmitResumeMembers(s, pfFocusFor, pfRestore, log)));
+
+		// An attack on an army that moved away since the order (members at war in one shared turn): no battle
+		RedirectCall(0x10883846, AttackPlan, Sym("AttackRecord", EmitAttackRecord(s)));
+		RedirectCall(0x108A7986, BattleStart, Sym("AttackCheck", EmitAttackCheck(s, log)));
 
 		// Log only: which set-up the pathfinder had when a member was asked for military access it already had, and
 		// where a war declaration between humans stalls (pending actions, negotiations, wars, attack orders)
