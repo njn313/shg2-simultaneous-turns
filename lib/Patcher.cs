@@ -5,7 +5,7 @@
 // Inputs it accepts (anything else is refused):
 //  - the original empire.retail.dll of the current Steam build (OriginalSha256);
 //  - the 8-player co-op mod v1.4 (Tasman Modding) built from that original (EightPlayerV14Sha256), so both mods can
-//    be installed together: the 8-player mod first, this one on top (NOTES.md "Compatibility with the 8-player mod").
+//    be installed together: the 8-player mod first, this one on top.
 // All new code goes into a section of its own (".s2st", appended after the last section; the header has room for
 // several more); hooks are relative jumps/calls; data lives in .data's slack from DataFloor on, past the 8-player
 // mod's two dwords. Same input -> same output on every PC: no timestamps, no paths, no unordered collections.
@@ -108,9 +108,18 @@ public static class SharedTurnsPatcher {
 
 	// "jmp target" over len bytes of whole instructions (the caller checked them with ExpectBytes); the rest are nops
 	static void PutJmp(uint at, uint target, int len) {
-		if (len < 5) throw new Exception("a jmp needs 5 bytes");
+		PutRel32(at, 0xE9, target, len);
+	}
+
+	// "call target" over len bytes of whole instructions (checked with ExpectBytes); the rest are nops
+	static void PutCall(uint at, uint target, int len) {
+		PutRel32(at, 0xE8, target, len);
+	}
+
+	static void PutRel32(uint at, byte opcode, uint target, int len) {
+		if (len < 5) throw new Exception("a jmp or call needs 5 bytes");
 		var p = new byte[len];
-		p[0] = 0xE9;
+		p[0] = opcode;
 		Array.Copy(BitConverter.GetBytes(unchecked((int)(target - (at + 5)))), 0, p, 1, 4);
 		for (int i = 5; i < len; i++) p[i] = 0x90;
 		PutBytes(at, p);
@@ -204,7 +213,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.8 (milestone 1, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message log)";
+	const string LogBuildTag = "shared turns 0.17 (milestones 1, 2 and 3, fixes 2-6, 4b and 6b, recruitment cards for members, group rebuilt after loading a save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
@@ -246,7 +255,7 @@ public static class SharedTurnsPatcher {
 		"!DESYNC the host drops reported player %d (vanilla kick)",         // 27
 		"!DESYNC this PC was reported: it leaves (vanilla kick)",           // 28
 		"!RESYNC started, auto-accepted",                                   // 29
-		"!RESYNC host pressed Ctrl+Shift+F9",                               // 30
+		"!RESYNC host pressed Ctrl+Shift+F9",                               // 30 (unused since build 0.17: no key)
 		"!RESYNC forced by the host's key",                                 // 31
 		"END_MOVES %f resumes an order left from its turn",                 // 32
 		"ACCESS %f can't reach its destination with the pathfinder built for %f",   // 33
@@ -261,6 +270,9 @@ public static class SharedTurnsPatcher {
 		"LOAD a save made during a turn (or a resync): group rebuilt without a turn start, who had ended ends again",   // 42
 		"MESSAGE event message sent from %d (return address), check vtable %d says show",          // 43
 		"MESSAGE event message sent from %d (return address), check vtable %d says don't show",    // 44
+		"DIPLOMACY negotiation %f with %f dropped: another clan's negotiation or popup is pending",  // 45
+		"DIPLOMACY %f picked a clan in the diplomacy panel while another clan's negotiation or popup is pending: no negotiation opened",   // 46
+		"RESUME %f carries on with a move the battle interrupted",         // 47
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
@@ -270,7 +282,7 @@ public static class SharedTurnsPatcher {
 		LogReportLeave = 28, LogResyncAuto = 29, LogResyncKey = 30, LogResyncForced = 31, LogEndMoves = 32,
 		LogAccessBlocked = 33, LogAccessKept = 34, LogClickPf = 35, LogPendingPush = 36, LogPendingPop = 37,
 		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41, LogLoadSave = 42, LogMessageShow = 43,
-		LogMessageHide = 44;
+		LogMessageHide = 44, LogNegotiationDropped = 45, LogNegotiationUiBlocked = 46, LogResumeMembers = 47;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -718,13 +730,15 @@ public static class SharedTurnsPatcher {
 	const uint UiPfActiveVa = GroupVa + 0x68;  // 1 while the UI has set the pathfinder up for the local member
 	const uint UiPfSavedVa = GroupVa + 0x6C;   // +0 pf, +4 its kept faction [pf+1F4h], +8 its kept mode [pf+208h]
 	const uint PfLastDword = GroupVa + 0x74;
-	// GroupVa + 78h: ResyncKeyPrevVa (desync fixes, standalone builds only)
+	// GroupVa + 78h, + 80h: the resync key state until build 0.16 (free now)
 	const int PfDwords = 0x1C / 4;             // PfFocusVa .. PfLastDword
 	const uint PfBuiltForVa = GroupVa + 0x7C;  // log only: the faction the pathfinder's region flags were last built for
 	const uint FactionTurnStart = 0x105FD090;  // thiscall(faction)
 	const uint FactionTurnEnd = 0x105B2870;    // thiscall(faction)
 	const uint FactionIsDead = 0x105CB900;     // thiscall(faction) -> al
 	const uint FactionResumeOrder = 0x105B73D0;   // thiscall(faction) -> al: one of its characters' orders left from the turn moved on
+	const uint OrderResume = 0x108D8F20;       // thiscall(order; 1, 0, 0) ret 0Ch: re-issue an interrupted order
+	const uint LuaType = 0x10EA3A90;           // cdecl lua_type(L, index): 4 = string
 	const uint AttackAllowed = 0x106E4F60;     // thiscall(campaign; faction) ret 4 -> al
 	const uint FactionsAtWar = 0x105CB0F0;     // thiscall(faction; other) ret 4 -> al
 	const uint CampaignEndTurn = 0x106A5DA0;   // thiscall(campaign; faction, flag) ret 8
@@ -1915,22 +1929,103 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
-	static uint EmitOwnActionTurn(Asm a, uint groupAllows) {
+	static uint EmitForeignPending(Asm a) {
+		// cdecl(campaign, f) -> eax = 1 if the pending actions ([campaign+14A8h], list head at +0, next at node+4) hold
+		// another clan's negotiation (vtable 115FCE00, +8 = the faction negotiating) or another clan's popup (the four
+		// popup nodes of OwnActionTurn, +8 = the acting character); else 0. Keeps every register but eax.
+		uint at = a.Here;
+		a.Raw(0x53);                                      // push ebx
+		a.Raw(0x56);                                      // push esi
+		a.Raw(0x57);                                      // push edi
+		a.Raw(0x51);                                      // push ecx
+		a.Raw(0x52);                                      // push edx                (campaign at +18h, f at +1Ch)
+		EmitGroupPtr(a, 7, 0x115FCE00);                   // edi = the negotiation vtable
+		a.Raw(0x8B, 0x74, 0x24, 0x18);                    // mov esi,[esp+18h]       (campaign)
+		a.Raw(0x8B, 0xB6, 0xA8, 0x14, 0x00, 0x00);        // mov esi,[esi+14A8h]     (pending actions)
+		a.Raw(0x85, 0xF6);                                // test esi,esi
+		a.J8(0x74, "none");                               // jz none
+		a.Raw(0x8B, 0x36);                                // mov esi,[esi]           (head)
+		a.Mark("loop");
+		a.Raw(0x85, 0xF6);                                // test esi,esi
+		a.J8(0x74, "none");                               // jz none
+		a.Raw(0x8B, 0x06);                                // mov eax,[esi]           (vtable)
+		a.Raw(0x2B, 0xC7);                                // sub eax,edi
+		a.J8(0x75, "notneg");                             // jne notneg
+		a.Raw(0x8B, 0x46, 0x08);                          // mov eax,[esi+8]         (the faction negotiating)
+		a.Raw(0x3B, 0x44, 0x24, 0x1C);                    // cmp eax,[esp+1Ch]
+		a.J8(0x75, "found");                              // jne found
+		a.J8(0xEB, "next");                               // jmp next
+		a.Mark("notneg");
+		a.Raw(0x3D); D32(a, 0x115FCFB8u - 0x115FCE00u);   // cmp eax,1B8h            (move options)
+		a.J8(0x74, "popup");                              // je popup
+		a.Raw(0x3D); D32(a, 0x115FD02Cu - 0x115FCE00u);   // cmp eax,22Ch            (attack on a character)
+		a.J8(0x74, "popup");                              // je popup
+		a.Raw(0x3D); D32(a, 0x115FD488u - 0x115FCE00u);   // cmp eax,688h            (the character node 115FD488)
+		a.J8(0x74, "popup");                              // je popup
+		a.Raw(0x3D); D32(a, 0x115FD4F4u - 0x115FCE00u);   // cmp eax,6F4h            (the object node 115FD4F4)
+		a.J8(0x75, "next");                               // jne next
+		a.Mark("popup");
+		a.Raw(0x8B, 0x4E, 0x08);                          // mov ecx,[esi+8]         (the acting character)
+		a.Raw(0x85, 0xC9);                                // test ecx,ecx
+		a.J8(0x74, "next");                               // jz next
+		a.Raw(0x81, 0xC1, 0x54, 0x02, 0x00, 0x00);        // add ecx,254h
+		a.Call(OwnerOf);                                  // eax = its faction
+		a.Raw(0x3B, 0x44, 0x24, 0x1C);                    // cmp eax,[esp+1Ch]
+		a.J8(0x75, "found");                              // jne found
+		a.Mark("next");
+		a.Raw(0x8B, 0x76, 0x04);                          // mov esi,[esi+4]         (next)
+		a.J8(0xEB, "loop");                               // jmp loop
+		a.Mark("found");
+		a.Raw(0xB8, 0x01, 0x00, 0x00, 0x00);              // mov eax,1
+		a.J8(0xEB, "out");                                // jmp out
+		a.Mark("none");
+		a.Raw(0x33, 0xC0);                                // xor eax,eax
+		a.Mark("out");
+		a.Raw(0x5A);                                      // pop edx
+		a.Raw(0x59);                                      // pop ecx
+		a.Raw(0x5F);                                      // pop edi
+		a.Raw(0x5E);                                      // pop esi
+		a.Raw(0x5B);                                      // pop ebx
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitOwnActionTurn(Asm a, uint groupSlot, uint groupAllows, uint foreignPending) {
 		// Lua IsPlayersTurn FUN_11141720, replaces "cmp eax,[ecx+2Ch] / sete cl / movzx ecx,cl" at 1114174C (9 bytes).
-		// A member's attack on a clan at peace leaves the "move options" pending action; its popup's DeclareWar calls
-		// ToggleDiplomacyPopup, which opens the diplomacy panel only if IsPlayersTurn, and the panel's exit finalises
-		// the pending action. Without the panel the Lua stops on a nil panel and the pending action blocks everyone
-		// (fix 4, third in-game test). True as vanilla for local == current; also for a group member that hasn't ended
-		// while the head pending action is its own: a node whose activation shows the move-options popup for its
-		// character at +8 (FUN_11153910 opens it on the PC whose clan owns that character): move options 115FCFB8 (a
-		// move into a clan at peace), the attack node 115FD02C (CCQ_CHARACTER_ATTACK on a character: FUN_105f2d60,
-		// fix 4b), its siblings 115FD488 / 115FD4F4 (FUN_105f2f60 / FUN_105f3060, same channel [campaign+3C0h]); or a
-		// negotiation node (vtable 115FCE00, +8 = the faction negotiating) it opened.
+		// It decides whether ToggleDiplomacyPopup opens the diplomacy panel and, in the panel, whether the local player
+		// acts as the proposer (in turn) or as the receiver of an offer (out of turn).
+		// - The lead of a running group (local == current): vanilla true, but false while another clan's negotiation or
+		//   popup is pending (ForeignPending), so its panel answers a member's offer as the receiver.
+		// - A group member that hasn't ended (milestone 2): true while nothing is pending, so it can open diplomacy; also
+		//   while the head pending action is its own: a node whose activation shows the move-options popup for its
+		//   character at +8 (FUN_11153910 opens it on the PC whose clan owns that character): move options 115FCFB8 (a
+		//   move into a clan at peace), the attack node 115FD02C (CCQ_CHARACTER_ATTACK on a character: FUN_105f2d60,
+		//   fix 4b), its siblings 115FD488 / 115FD4F4 (FUN_105f2f60 / FUN_105f3060, same channel [campaign+3C0h]); or a
+		//   negotiation node (vtable 115FCE00, +8 = the faction negotiating) it opened. So the popup's DeclareWar opens
+		//   its diplomacy panel and the panel's exit finalises the pending action (fix 4: without the panel the Lua
+		//   stops on a nil panel and the pending action blocks everyone).
+		// - Without a running group: vanilla (local == current).
 		// entry: eax = local faction, ecx = world, esi = ui, edi = Lua state (kept); eax, ecx, edx and the flags are
 		// dead (11141755 pushes ecx as the result)
 		uint at = a.Here;
 		a.Raw(0x3B, 0x41, 0x2C);                          // cmp eax,[ecx+2Ch]       (replaced: local == current)
-		a.J32("yes", 0x0F, 0x84);                         // je yes
+		a.J32("member", 0x0F, 0x85);                      // jne member
+		a.Raw(0x8B, 0xC8);                                // mov ecx,eax             (local)
+		a.Call(groupSlot);                                // eax = its slot, edx = &group
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J32("yes", 0x0F, 0x85);                         // jnz yes                 (not the lead of a group: vanilla)
+		a.Raw(0x83, 0x3A, 0x02);                          // cmp dword ptr [edx],2
+		a.J32("yes", 0x0F, 0x82);                         // jb yes                  (no group running)
+		a.Raw(0x51);                                      // push ecx                (f = local)
+		a.Raw(0x8B, 0x86, 0x98, 0x0A, 0x00, 0x00);        // mov eax,[esi+0A98h]     (model)
+		a.Raw(0xFF, 0x70, 0x08);                          // push dword ptr [eax+8]  (campaign)
+		a.Call(foreignPending);
+		a.Raw(0x83, 0xC4, 0x08);                          // add esp,8
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J32("no", 0x0F, 0x85);                          // jnz no
+		a.J32("yes", 0xE9);                               // jmp yes
+		a.Mark("member");
 		a.Raw(0x8B, 0xD0);                                // mov edx,eax             (local)
 		a.Raw(0x52);                                      // push edx                (f)
 		a.Raw(0xFF, 0x71, 0x2C);                          // push dword ptr [ecx+2Ch] (cur)
@@ -1945,7 +2040,7 @@ public static class SharedTurnsPatcher {
 		a.J8(0x74, "no");                                 // jz no
 		a.Raw(0x8B, 0x09);                                // mov ecx,[ecx]           (head)
 		a.Raw(0x85, 0xC9);                                // test ecx,ecx
-		a.J8(0x74, "no");                                 // jz no                   (none: not its turn)
+		a.J8(0x74, "yes");                                // jz yes                  (nothing pending: its turn)
 		a.Raw(0xE8, 0x00, 0x00, 0x00, 0x00);              // call $+5
 		uint popAt = a.Here;
 		a.Raw(0x58);                                      // pop eax
@@ -1982,6 +2077,207 @@ public static class SharedTurnsPatcher {
 		a.Mark("yes");
 		a.Raw(0xB9, 0x01, 0x00, 0x00, 0x00);              // mov ecx,1
 		a.Jmp(0x11141755);
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitLocalAsCurIfAllowed(Asm a, uint groupAllows) {
+		// replaces "call FUN_11124580" (ecx = ui -> eax = local faction; changes only eax) at 11142F57 (Lua
+		// MultiplayerPlayerOutOfTurn FUN_11142f20: true shows "player X saved" instead of the save dialog) and 1122FF86
+		// (HudClanButton vt+8 FUN_1122ff50: the Clan button is inactive in MP unless local == current). Both compare
+		// the result with esi = current next. Returns current when GroupAllows(current, local), so a member that hasn't
+		// ended counts as in turn; else local, or ~current for the lead after its own end (local == current).
+		uint at = a.Here;
+		a.Call(0x11124580);                               // eax = local (replaced call)
+		a.Raw(0x52);                                      // push edx
+		a.Raw(0x50);                                      // push eax                (f = local)
+		a.Raw(0x56);                                      // push esi                (cur)
+		a.Call(groupAllows);                              // keeps ecx and edx
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.Raw(0x58);                                      // pop eax                 (cur)
+		a.Raw(0x5A);                                      // pop edx                 (local)
+		a.J8(0x75, "out");                                // jnz out
+		a.Raw(0x8B, 0xC2);                                // mov eax,edx
+		a.Raw(0x3B, 0xC6);                                // cmp eax,esi
+		a.J8(0x75, "out");                                // jne out
+		a.Raw(0xF7, 0xD0);                                // not eax                 (the lead has ended: any other value)
+		a.Mark("out");
+		a.Raw(0x5A);                                      // pop edx
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitUnitPanelZF(Asm a, uint groupAllows) {
+		// replaces "mov eax,[eax+2Ch] / cmp eax,[ecx+0B0h]" (9 bytes, a jne to the inactive branch follows) at 112457A9,
+		// 1124ED39, 1125458A, 11254772: the unit panels' disband / scupper buttons FUN_11245750, FUN_1124ece0,
+		// FUN_11254520, FUN_11254710, active only when local == current. entry: eax = world, ecx = model.
+		// Exit: ZF = GroupAllows(cur, local), eax = cur as before, every other register kept.
+		uint at = a.Here;
+		a.Raw(0x8B, 0x40, 0x2C);                          // mov eax,[eax+2Ch]       (cur)
+		a.Raw(0xFF, 0xB1, 0xB0, 0x00, 0x00, 0x00);        // push dword ptr [ecx+0B0h] (f = local)
+		a.Raw(0x50);                                      // push eax                (cur)
+		a.Call(groupAllows);                              // keeps ecx and edx
+		a.Raw(0x83, 0xF8, 0x01);                          // cmp eax,1               (ZF = allowed)
+		a.Raw(0x58);                                      // pop eax                 (cur)
+		a.Raw(0x8D, 0x64, 0x24, 0x04);                    // lea esp,[esp+4]         (keeps the flags)
+		a.Raw(0xC3);                                      // ret
+		return at;
+	}
+
+	static uint EmitDemandActor(Asm a, uint groupAllows) {
+		// replaces "call FUN_1070b4a0" (thiscall(world) -> current-or-proxy) at 11143D98 (Lua PreBattleDemandSurrender
+		// FUN_11143d60) and 111798B2 (the pre-battle panel's DemandSurrender FUN_11179890): the faction that
+		// CCQ_DEMAND_SURRENDER names. A group member that hasn't ended names itself (the local faction) instead of the
+		// lead. entry: ecx = world; after the call eax is stored, ecx is reloaded, edx is dead (both sites).
+		uint at = a.Here;
+		a.Raw(0x51);                                      // push ecx                (world)
+		a.Call(CurrentOrProxyFn);                         // eax = current-or-proxy (replaced call)
+		a.Raw(0x59);                                      // pop ecx
+		EmitGroupPtr(a, 2, UiGlobal);                     // edx = &ui
+		a.Raw(0x8B, 0x12);                                // mov edx,[edx]
+		a.Raw(0x8B, 0x92, 0x98, 0x0A, 0x00, 0x00);        // mov edx,[edx+0A98h]     (model)
+		a.Raw(0x8B, 0x92, 0xB0, 0x00, 0x00, 0x00);        // mov edx,[edx+0B0h]      (local)
+		a.Raw(0x3B, 0xD0);                                // cmp edx,eax
+		a.J8(0x74, "out");                                // je out
+		a.Raw(0x50);                                      // push eax                (current-or-proxy)
+		a.Raw(0x52);                                      // push edx                (f = local)
+		a.Raw(0xFF, 0x71, 0x2C);                          // push dword ptr [ecx+2Ch] (cur)
+		a.Call(groupAllows);                              // keeps ecx and edx
+		a.Raw(0x83, 0xC4, 0x08);                          // add esp,8
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.Raw(0x58);                                      // pop eax                 (current-or-proxy)
+		a.J8(0x74, "out");                                // jz out
+		a.Raw(0x8B, 0xC2);                                // mov eax,edx             (local)
+		a.Mark("out");
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitNegotiationGate(Asm a, uint groupSlot, uint foreignPending, uint negotiationLog, uint log) {
+		// replaces "call FUN_10692d90" (thiscall(campaign; f1, f2, 1) ret 0Ch, result unused) at 10884342 in
+		// CCQ_DIPLOMACY_BEGIN_NEGOTIATION FUN_108842f0, in front of NegotiationLog. There is one negotiation slot
+		// ([campaign+14D4h]) and the PROPOSE / ACCEPT / DECLINE commands act on it without naming a sender, so in a
+		// running group (the current faction is the lead of 2+ members) a negotiation is dropped while another clan's
+		// negotiation or popup is pending (two members picking a clan within the network delay; the UI side,
+		// UiNegotiationGate, stops it otherwise). Simulation: every PC decides the same.
+		uint at = a.Here;
+		a.Raw(0x51);                                      // push ecx                (campaign; f1 at +0Ch, f2 at +10h)
+		a.Raw(0x8B, 0x81, 0x98, 0x14, 0x00, 0x00);        // mov eax,[ecx+1498h]     (world)
+		a.Raw(0x8B, 0x48, 0x2C);                          // mov ecx,[eax+2Ch]       (cur)
+		a.Call(groupSlot);                                // eax = cur's slot, edx = &group
+		a.Raw(0x59);                                      // pop ecx                 (campaign)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x75, "pass");                               // jnz pass                (cur isn't the lead of a group)
+		a.Raw(0x83, 0x3A, 0x02);                          // cmp dword ptr [edx],2
+		a.J8(0x72, "pass");                               // jb pass                 (no group running)
+		a.Raw(0xFF, 0x74, 0x24, 0x04);                    // push dword ptr [esp+4]  (f1)
+		a.Raw(0x51);                                      // push ecx                (campaign)
+		a.Call(foreignPending);
+		a.Raw(0x83, 0xC4, 0x08);                          // add esp,8
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "pass");                               // jz pass
+		a.Raw(0xFF, 0x74, 0x24, 0x08);                    // push dword ptr [esp+8]  (f2)
+		a.Raw(0xFF, 0x74, 0x24, 0x08);                    // push dword ptr [esp+8]  (f1)
+		CallLog(a, log, LogNegotiationDropped);
+		a.Raw(0xC2, 0x0C, 0x00);                          // ret 0Ch                 (dropped)
+		a.Mark("pass");
+		a.Jmp(negotiationLog);
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitUiNegotiationGate(Asm a, uint groupSlot, uint foreignPending, uint log) {
+		// replaces "call FUN_1110e1b0" (thiscall(new object; L, 1) ret 8, the constructor that sends
+		// CCQ_DIPLOMACY_BEGIN_NEGOTIATION) at 11152230 in the Lua UIDiplomacyNegotiation(player, opponent) FUN_11152200,
+		// which diplomacy_panel Initialise(faction) calls when a clan is picked. The panel can be open (relations list,
+		// no negotiation) while another member's negotiation or popup becomes pending; picking a clan then would act on
+		// that negotiation. In a running group with another clan's negotiation or popup pending (as this PC sees it),
+		// the object isn't built and the binding returns nil: no command is sent and the panel's offers do nothing
+		// (its Lua stops on the nil negotiation; closing the panel works). The object's memory is left (small, rare).
+		// Only the outgoing form: the ctor sends the command only when the last argument is a string (the factions);
+		// otherwise it wraps an incoming negotiation (RequestDiplomacy, the receiver of another player's offer), which
+		// must pass (build 0.12 and earlier gave the receiver an empty panel).
+		// entry: ecx = edi = the new object, esi = Lua state; the caller pushes nil and returns 1 when edi = 0.
+		uint at = a.Here;
+		a.Raw(0x51);                                      // push ecx                (the object)
+		a.Raw(0x6A, 0xFF);                                // push -1
+		a.Raw(0x56);                                      // push esi                (L)
+		a.Call(LuaType);                                  // lua_type(L, -1), the ctor's own test
+		a.Raw(0x83, 0xC4, 0x08);                          // add esp,8
+		a.Raw(0x83, 0xF8, 0x04);                          // cmp eax,4               (LUA_TSTRING)
+		a.J8(0x75, "ctor");                               // jne ctor                (an incoming negotiation)
+		EmitGroupPtr(a, 0, UiGlobal);                     // eax = &ui
+		a.Raw(0x8B, 0x00);                                // mov eax,[eax]
+		a.Raw(0x8B, 0x80, 0x98, 0x0A, 0x00, 0x00);        // mov eax,[eax+0A98h]     (model)
+		a.Raw(0xFF, 0xB0, 0xB0, 0x00, 0x00, 0x00);        // push dword ptr [eax+0B0h] (f = local)
+		a.Raw(0x8B, 0x40, 0x08);                          // mov eax,[eax+8]         (campaign)
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0x8B, 0x80, 0x98, 0x14, 0x00, 0x00);        // mov eax,[eax+1498h]     (world)
+		a.Raw(0x8B, 0x48, 0x2C);                          // mov ecx,[eax+2Ch]       (cur)
+		a.Call(groupSlot);                                // eax = cur's slot, edx = &group
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x75, "pass");                               // jnz pass                (cur isn't the lead of a group)
+		a.Raw(0x83, 0x3A, 0x02);                          // cmp dword ptr [edx],2
+		a.J8(0x72, "pass");                               // jb pass                 (no group running)
+		a.Call(foreignPending);                           // (campaign, local)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "pass");                               // jz pass
+		a.Raw(0x8B, 0x44, 0x24, 0x04);                    // mov eax,[esp+4]         (local)
+		a.Raw(0x89, 0x04, 0x24);                          // mov [esp],eax           (Log pops id and two arguments: local, local)
+		CallLog(a, log, LogNegotiationUiBlocked);
+		a.Raw(0x59);                                      // pop ecx
+		a.Raw(0x33, 0xFF);                                // xor edi,edi             (the caller pushes nil)
+		a.Raw(0xC2, 0x08, 0x00);                          // ret 8
+		a.Mark("pass");
+		a.Raw(0x83, 0xC4, 0x08);                          // add esp,8
+		a.Mark("ctor");
+		a.Raw(0x59);                                      // pop ecx                 (the object)
+		a.Jmp(0x1110E1B0);
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitOpenNegotiationsGate(Asm a, uint groupSlot, uint foreignPending, uint log) {
+		// jumped to from 111D7230, the entry of the diplomacy panel's OpenNegotiations FUN_111d7230 (thiscall(panel; x)
+		// ret 4, returns 0): the relations list's "start negotiations" button, which hides the list and calls the
+		// panel's Lua Initialise(faction). The panel can be open on the relations list while another member's
+		// negotiation or popup becomes pending; then (same test as UiNegotiationGate) the click does nothing and the
+		// list stays, instead of a negotiation view without a negotiation (no buttons, Cancel stops on the nil
+		// negotiation in its Lua). entry: ecx = the panel; eax, edx are free.
+		uint at = a.Here;
+		a.Raw(0x51);                                      // push ecx                (the panel)
+		EmitGroupPtr(a, 0, UiGlobal);                     // eax = &ui
+		a.Raw(0x8B, 0x00);                                // mov eax,[eax]
+		a.Raw(0x8B, 0x80, 0x98, 0x0A, 0x00, 0x00);        // mov eax,[eax+0A98h]     (model)
+		a.Raw(0xFF, 0xB0, 0xB0, 0x00, 0x00, 0x00);        // push dword ptr [eax+0B0h] (f = local)
+		a.Raw(0x8B, 0x40, 0x08);                          // mov eax,[eax+8]         (campaign)
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0x8B, 0x80, 0x98, 0x14, 0x00, 0x00);        // mov eax,[eax+1498h]     (world)
+		a.Raw(0x8B, 0x48, 0x2C);                          // mov ecx,[eax+2Ch]       (cur)
+		a.Call(groupSlot);                                // eax = cur's slot, edx = &group
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x75, "pass");                               // jnz pass                (cur isn't the lead of a group)
+		a.Raw(0x83, 0x3A, 0x02);                          // cmp dword ptr [edx],2
+		a.J8(0x72, "pass");                               // jb pass                 (no group running)
+		a.Call(foreignPending);                           // (campaign, local)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "pass");                               // jz pass
+		a.Raw(0x8B, 0x44, 0x24, 0x04);                    // mov eax,[esp+4]         (local)
+		a.Raw(0x89, 0x04, 0x24);                          // mov [esp],eax           (Log pops id and two arguments: local, local)
+		CallLog(a, log, LogNegotiationUiBlocked);
+		a.Raw(0x59);                                      // pop ecx
+		a.Raw(0x33, 0xC0);                                // xor eax,eax
+		a.Raw(0xC2, 0x04, 0x00);                          // ret 4
+		a.Mark("pass");
+		a.Raw(0x83, 0xC4, 0x08);                          // add esp,8
+		a.Raw(0x59);                                      // pop ecx                 (the panel)
+		a.Raw(0x83, 0xEC, 0x54);                          // sub esp,54h             (replaced)
+		a.Raw(0x53);                                      // push ebx                (replaced)
+		a.Raw(0x56);                                      // push esi                (replaced)
+		a.Raw(0x8B, 0xF1);                                // mov esi,ecx             (replaced)
+		a.Jmp(0x111D7237);
 		a.Resolve();
 		return at;
 	}
@@ -2178,6 +2474,86 @@ public static class SharedTurnsPatcher {
 		a.Mark("moved");
 		a.Raw(0xB0, 0x01);                                // mov al,1
 		a.Mark("out");
+		a.Raw(0x5F);                                      // pop edi
+		a.Raw(0x5E);                                      // pop esi
+		a.Raw(0x5B);                                      // pop ebx
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitResumeMembers(Asm a, uint pfFocusFor, uint pfRestore, uint log) {
+		// replaces thunk 1070B490 at 10607876 in the battle driver FUN_10604260, reached once the battle is back in
+		// state 10 with +C2h / +C8h set (orders were interrupted): vanilla then re-issues the interrupted orders
+		// ([order+16h] set) of the current faction's characters only (1060787B..106078CB), so a member's move that ran
+		// into a battle (ninth test, kind 1) stopped for good. First the same loop for each living non-lead member in
+		// slot order, with its ended bit cleared for the calls (in the lead's end of turn every member has ended and
+		// "closing" GroupAllows would refuse its movers, as in EndMoves) and the pathfinder set up for it (state 10:
+		// PfFocusFor acts), then the turn's set-up again; then the replaced call for vanilla's loop.
+		// entry: ecx = world, ebx = the pending battle; returns eax = current-or-proxy; keeps ebx, esi, edi, ebp
+		uint at = a.Here;
+		a.Raw(0x53);                                      // push ebx
+		a.Raw(0x56);                                      // push esi
+		a.Raw(0x57);                                      // push edi
+		a.Raw(0x55);                                      // push ebp
+		a.Raw(0x51);                                      // push ecx                (world)
+		EmitGroupPtr(a, 7, GroupVa);                      // edi = &group
+		a.Raw(0x83, 0x3F, 0x02);                          // cmp dword ptr [edi],2
+		a.J32("done", 0x0F, 0x8C);                        // jl done                 (no group, or the lead alone)
+		a.Call(CurrentOrProxy);                           // thunk 1070B490(world)
+		a.Raw(0x3B, 0x47, 0x34);                          // cmp eax,[edi+34h]
+		a.J32("done", 0x0F, 0x85);                        // jne done                (a proxy turn: vanilla)
+		a.Raw(0xBD, 0x01, 0x00, 0x00, 0x00);              // mov ebp,1               (slot)
+		a.Mark("loop");
+		a.Raw(0x8B, 0x4C, 0xAF, 0x34);                    // mov ecx,[edi+ebp*4+34h] (member)
+		a.Call(FactionIsDead);
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J32("next", 0x0F, 0x85);                        // jnz next
+		a.Raw(0xFF, 0x77, 0x04);                          // push dword ptr [edi+4]  (ended)
+		a.Raw(0x0F, 0xB3, 0x6F, 0x04);                    // btr [edi+4],ebp         (acts as if it hadn't ended)
+		a.Raw(0x8B, 0x44, 0xAF, 0x34);                    // mov eax,[edi+ebp*4+34h]
+		a.Raw(0x8B, 0xB0, 0x18, 0x07, 0x00, 0x00);        // mov esi,[eax+718h]      (its characters)
+		a.Raw(0x8B, 0x88, 0x14, 0x07, 0x00, 0x00);        // mov ecx,[eax+714h]      (count)
+		a.Raw(0x8D, 0x14, 0x8E);                          // lea edx,[esi+ecx*4]
+		a.Raw(0x52);                                      // push edx                (end)
+		a.Mark("char");
+		a.Raw(0x3B, 0x34, 0x24);                          // cmp esi,[esp]
+		a.J8(0x73, "chars done");                         // jae chars done
+		a.Raw(0x8B, 0x06);                                // mov eax,[esi]
+		a.Raw(0x8B, 0x00);                                // mov eax,[eax]           (character)
+		a.Raw(0x8B, 0x88, 0x94, 0x00, 0x00, 0x00);        // mov ecx,[eax+94h]       (its order)
+		a.Raw(0x85, 0xC9);                                // test ecx,ecx
+		a.J8(0x74, "char next");                          // jz char next
+		a.Raw(0x80, 0x79, 0x16, 0x00);                    // cmp byte ptr [ecx+16h],0 (interrupted)
+		a.J8(0x74, "char next");                          // je char next
+		a.Raw(0xFF, 0x74, 0xAF, 0x34);                    // push dword ptr [edi+ebp*4+34h] (member)
+		a.Raw(0x8B, 0x43, 0x30);                          // mov eax,[ebx+30h]
+		a.Raw(0xFF, 0x70, 0x08);                          // push dword ptr [eax+8]  (campaign)
+		a.Call(pfFocusFor);                               // keeps every register and the flags
+		a.Raw(0x6A, 0x00);                                // push 0
+		a.Raw(0x6A, 0x00);                                // push 0
+		a.Raw(0x6A, 0x01);                                // push 1
+		a.Call(OrderResume);                              // FUN_108d8f20(order; 1, 0, 0), as at 106078C0
+		a.Raw(0x6A, 0x00);                                // push 0
+		a.Raw(0xFF, 0x74, 0xAF, 0x34);                    // push dword ptr [edi+ebp*4+34h]
+		CallLog(a, log, LogResumeMembers);
+		a.Mark("char next");
+		a.Raw(0x83, 0xC6, 0x04);                          // add esi,4
+		a.J8(0xEB, "char");                               // jmp char
+		a.Mark("chars done");
+		a.Raw(0x5A);                                      // pop edx
+		a.Raw(0x8B, 0x43, 0x30);                          // mov eax,[ebx+30h]
+		a.Raw(0xFF, 0x70, 0x08);                          // push dword ptr [eax+8]  (campaign)
+		a.Call(pfRestore);                                // nothing to undo unless PfFocusFor set it up
+		a.Raw(0x8F, 0x47, 0x04);                          // pop dword ptr [edi+4]
+		a.Mark("next");
+		a.Raw(0x45);                                      // inc ebp
+		a.Raw(0x3B, 0x2F);                                // cmp ebp,[edi]
+		a.J32("loop", 0x0F, 0x8C);                        // jl loop
+		a.Mark("done");
+		a.Raw(0x59);                                      // pop ecx                 (world)
+		a.Call(CurrentOrProxy);                           // thunk 1070B490(world) (replaced call)
+		a.Raw(0x5D);                                      // pop ebp
 		a.Raw(0x5F);                                      // pop edi
 		a.Raw(0x5E);                                      // pop esi
 		a.Raw(0x5B);                                      // pop ebx
@@ -2539,11 +2915,34 @@ public static class SharedTurnsPatcher {
 		RedirectCall(0x10883DD0, 0x10903190, Sym("MoveLog", EmitMoveLog(s, groupAllows, log)));
 		uint clickLog = Sym("ClickLog", EmitClickLog(s, log));   // its two call sites are at the end (ClickPfLog)
 
-		// Fix 4: Lua IsPlayersTurn is also true for a member whose own popup / negotiation is the pending action, so
-		// declaring war from the attack popup opens its diplomacy panel and the panel releases the pending action
-		uint ownActionTurn = Sym("OwnActionTurn", EmitOwnActionTurn(s, groupAllows));
+		// Fix 4 and milestone 2: Lua IsPlayersTurn is true for a member that hasn't ended while nothing is pending or
+		// its own popup / negotiation is the pending action (so declaring war from the attack popup opens its diplomacy
+		// panel and the panel releases the pending action), and false for the lead while another clan's negotiation or
+		// popup is pending
+		uint foreignPending = Sym("ForeignPending", EmitForeignPending(s));
+		uint ownActionTurn = Sym("OwnActionTurn", EmitOwnActionTurn(s, groupSlot, groupAllows, foreignPending));
 		ExpectBytes(0x1114174C, 0x3B, 0x41, 0x2C, 0x0F, 0x94, 0xC1, 0x0F, 0xB6, 0xC9);
 		PutJmp(0x1114174C, ownActionTurn, 9);
+
+		// Milestone 2, UI gates for members: FUN_11122970 (the diplomacy button and the radar's clan list, agent
+		// recruitment and its other UI callers), the save message and the Clan button, the unit panels' disband /
+		// scupper buttons, CCQ_DEMAND_SURRENDER naming the local member, and one negotiation at a time (simulation and
+		// the diplomacy panel)
+		RedirectCall(0x11122988, IsEqual, eqFCur);
+		uint localAsCur = Sym("LocalAsCurIfAllowed", EmitLocalAsCurIfAllowed(s, groupAllows));
+		RedirectCall(0x11142F57, 0x11124580, localAsCur);
+		RedirectCall(0x1122FF86, 0x11124580, localAsCur);
+		uint unitPanelZF = Sym("UnitPanelZF", EmitUnitPanelZF(s, groupAllows));
+		foreach (uint site in new uint[] { 0x112457A9, 0x1124ED39, 0x1125458A, 0x11254772 }) {
+			ExpectBytes(site, 0x8B, 0x40, 0x2C, 0x3B, 0x81, 0xB0, 0x00, 0x00, 0x00);
+			PutCall(site, unitPanelZF, 9);
+		}
+		uint demandActor = Sym("DemandActor", EmitDemandActor(s, groupAllows));
+		RedirectCall(0x11143D98, CurrentOrProxyFn, demandActor);
+		RedirectCall(0x111798B2, CurrentOrProxyFn, demandActor);
+		RedirectCall(0x11152230, 0x1110E1B0, Sym("UiNegotiationGate", EmitUiNegotiationGate(s, groupSlot, foreignPending, log)));
+		ExpectBytes(0x111D7230, 0x83, 0xEC, 0x54, 0x53, 0x56, 0x8B, 0xF1);
+		PutJmp(0x111D7230, Sym("OpenNegotiationsGate", EmitOpenNegotiationsGate(s, groupSlot, foreignPending, log)), 7);
 
 		// Fix 5: a member's turn start (new units walking to their general, character resets) runs with the member's
 		// pathfinder set-up; the group start ends with the turn's set-up again
@@ -2562,6 +2961,9 @@ public static class SharedTurnsPatcher {
 		// does for the current faction's
 		RedirectCall(0x106B4088, FactionResumeOrder, Sym("EndMoves", EmitEndMoves(s, pfFocusFor, pfRestore, log)));
 
+		// Milestone 3: after a battle the members' interrupted moves carry on too, not only the current faction's
+		RedirectCall(0x10607876, CurrentOrProxy, Sym("ResumeMembers", EmitResumeMembers(s, pfFocusFor, pfRestore, log)));
+
 		// Log only: which set-up the pathfinder had when a member was asked for military access it already had, and
 		// where a war declaration between humans stalls (pending actions, negotiations, wars, attack orders)
 		ReserveDataDword(PfBuiltForVa);
@@ -2577,7 +2979,8 @@ public static class SharedTurnsPatcher {
 		PutJmp(0x105EA330, Sym("PendingPushLog", EmitPendingPushLog(s, log)), 7);
 		ExpectBytes(0x105B60E0, 0x56, 0x8B, 0xF1, 0x57, 0x8B, 0x3E);
 		PutJmp(0x105B60E0, Sym("PendingPopLog", EmitPendingPopLog(s, log)), 6);
-		RedirectCall(0x10884342, 0x10692D90, Sym("NegotiationLog", EmitNegotiationLog(s, log)));
+		uint negotiationLog = Sym("NegotiationLog", EmitNegotiationLog(s, log));
+		RedirectCall(0x10884342, 0x10692D90, Sym("NegotiationGate", EmitNegotiationGate(s, groupSlot, foreignPending, negotiationLog, log)));
 		RedirectCall(0x108840E2, 0x107A4BD0, Sym("WarLog", EmitWarLog(s, log)));
 		RedirectCall(0x1088381B, AttackAllowed, Sym("AttackLog", EmitAttackLog(s, log)));
 
@@ -2610,12 +3013,26 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x83, 0xC4, 0x04);                          // add esp,4
 	}
 
-	static uint EmitFramePin(Asm a, uint log) {
-		// replaces "call FUN_10f36680" (ecx = its this): the resync key, the modes, then tail-call the original
+	static uint EmitFramePin(Asm a) {
+		// replaces "call FUN_10f36680" (ecx = its this): the modes, then tail-call the original. Build 0.15 showed this
+		// call doesn't run on the campaign map (its first-run log line never came), so the campaign tick pins too.
 		uint at = a.Here;
-		EmitResyncKeyPoll(a, log);
 		EmitPinFloatModes(a);
 		a.Jmp(MultiplayerUpdate);
+		return at;
+	}
+
+	const uint CampaignTick = 0x10703EA0;      // FUN_10703ea0 entry: mov eax,5090h / call __alloca_probe (10 bytes)
+	const uint AllocaProbe = 0x114FC1B0;
+
+	static uint EmitTickPin(Asm a) {
+		// jumped to from the campaign tick's entry (ecx = campaign, every PC, every tick, any phase): the modes (the
+		// campaign simulation starts here), then the replaced prologue
+		uint at = a.Here;
+		EmitPinFloatModes(a);
+		a.Raw(0xB8, 0x90, 0x50, 0x00, 0x00);              // mov eax,5090h           (replaced)
+		a.Call(AllocaProbe);                              // call __alloca_probe     (replaced)
+		a.Jmp(CampaignTick + 10);
 		return at;
 	}
 
@@ -2734,7 +3151,10 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
-	// Host resync key (Ctrl+Shift+F9). A resync only starts on a PC that noticed a checksum mismatch itself. Desyncs
+	// Host resync key (Ctrl+Shift+F9): removed in build 0.17. Polled at the campaign tick it started the host's resync
+	// alone, which made a real desync on every PC and a crash or the kick (NOTES "Next steps", build 0.16). Kept: the
+	// "force" answer below (no PC sends value 2 now). The original design:
+	// A resync only starts on a PC that noticed a checksum mismatch itself. Desyncs
 	// that hang the game instead (one PC stuck on an AI turn while another thinks it is a player's turn) never start
 	// one, and players who didn't notice ignore the others' 0xAC "accept" messages (FUN_10efa140 needs state 1..3).
 	// Once every PC has accepted, the host saves the campaign, sends the file and everyone loads it. Fix:
@@ -2746,10 +3166,6 @@ public static class SharedTurnsPatcher {
 	const uint ResyncAnswerCall = 0x10F10E2D;  // message 0xAC: call FUN_10efa140(resync; session, is_local, accept)
 	const uint ResyncAnswer = 0x10EFA140;
 	const uint StartResync = 0x10F058D0;       // thiscall(resync; session) ret 4
-	const uint SendResyncAnswer = 0x10F27820;  // thiscall(session; value) ret 4: broadcast message 0xAC
-	const uint SessionIsHost = 0x10F00940;     // thiscall(session) -> al
-	const uint GetAsyncKeyStateIat = 0x115A1558;
-	const uint ResyncKeyPrevVa = GroupVa + 0x78;   // 11CB15B0: the key was held last frame
 
 	static uint EmitForcedResyncAnswer(Asm a, uint log) {
 		uint at = a.Here;
@@ -2770,59 +3186,12 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
-	// polled once per frame from the frame hook (ebp = owner, [ebp+58h] = session); keeps every register
-	static void EmitResyncKeyPoll(Asm a, uint log) {
-		a.Raw(0x60);                                      // pushad
-		a.Raw(0xE8, 0x00, 0x00, 0x00, 0x00);              // call $+5
-		uint popAt = a.Here;
-		a.Raw(0x5E);                                      // pop esi
-		a.Raw(0x8B, 0x9E); D32(a, GetAsyncKeyStateIat - popAt);   // mov ebx,[esi+iat]
-		a.Raw(0x8D, 0xBE); D32(a, ResyncKeyPrevVa - popAt);       // lea edi,[esi+prev]
-		foreach (byte vk in new byte[] { 0x78, 0x11, 0x10 }) {   // F9, Ctrl, Shift
-			a.Raw(0x6A, vk);                              // push vk
-			a.Raw(0xFF, 0xD3);                            // call ebx                (GetAsyncKeyState)
-			a.Raw(0xF6, 0xC4, 0x80);                      // test ah,80h             (held)
-			a.J32("up", 0x0F, 0x84);                      // jz up
-		}
-		a.Raw(0x83, 0x3F, 0x00);                          // cmp dword ptr [edi],0   (only on the press itself)
-		a.J8(0x75, "done");                               // jne done
-		a.Raw(0xC7, 0x07, 0x01, 0x00, 0x00, 0x00);        // mov dword ptr [edi],1
-		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]       (session)
-		a.Raw(0x85, 0xC9);                                // test ecx,ecx
-		a.J8(0x74, "done");                               // jz done
-		a.Call(SessionIsHost);
-		a.Raw(0x84, 0xC0);                                // test al,al
-		a.J8(0x74, "done");                               // jz done
-		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]
-		a.Raw(0x8B, 0x81, 0x78, 0xBE, 0x02, 0x00);        // mov eax,[ecx+2BE78h]    (resync state)
-		a.Raw(0x85, 0xC0);                                // test eax,eax
-		a.J8(0x74, "done");                               // jz done
-		a.Raw(0x83, 0x78, 0x30, 0x00);                    // cmp dword ptr [eax+30h],0
-		a.J8(0x75, "done");                               // jne done
-		a.Raw(0x6A, 0x00, 0x6A, 0x00);                    // push 0 / push 0
-		CallLog(a, log, LogResyncKey);
-		a.Raw(0x8B, 0xF0);                                // mov esi,eax
-		a.Raw(0x51);                                      // push ecx                (session)
-		a.Raw(0x8B, 0xCE);                                // mov ecx,esi
-		a.Call(StartResync);                              // the host's own resync (popup + auto-accept)
-		a.Raw(0x83, 0x7E, 0x30, 0x00);                    // cmp dword ptr [esi+30h],0
-		a.J8(0x74, "done");                               // je done                 (not on the campaign map)
-		a.Raw(0x8B, 0x4D, 0x58);                          // mov ecx,[ebp+58h]
-		a.Raw(0x6A, 0x02);                                // push 2                  (force: everyone else joins)
-		a.Call(SendResyncAnswer);                         // ecx = session
-		a.J8(0xEB, "done");                               // jmp done
-		a.Mark("up");
-		a.Raw(0xC7, 0x07, 0x00, 0x00, 0x00, 0x00);        // mov dword ptr [edi],0
-		a.Mark("done");
-		a.Raw(0x61);                                      // popad
-		a.Resolve();
-	}
-
 	static void ApplyDesyncFixes(Asm s, uint log) {
-		ReserveDataDword(ResyncKeyPrevVa);
 		ExpectBytes(SaveScreenLocaleCategory, 0x6A, 0x00, 0xE8);
 		PutBytes(SaveScreenLocaleCategory + 1, new byte[] { 0x05 });
-		RedirectCall(FrameUpdateCall, MultiplayerUpdate, Sym("FramePin", EmitFramePin(s, log)));
+		RedirectCall(FrameUpdateCall, MultiplayerUpdate, Sym("FramePin", EmitFramePin(s)));
+		ExpectBytes(CampaignTick, 0xB8, 0x90, 0x50, 0x00, 0x00, 0xE8, 0x06, 0x83, 0xDF, 0x00);
+		PutJmp(CampaignTick, Sym("TickPin", EmitTickPin(s)), 10);
 		ExpectBytes(BattleTickAt, 0xFF, 0x74, 0x24, 0x08, 0x8B, 0x4C, 0x24, 0x10);
 		PutJmp(BattleTickAt, Sym("BattleTickPin", EmitBattleTickPin(s)), 8);
 		ExpectBytes(DesyncKickAt, 0x8B, 0x8F, 0x74, 0xBE, 0x02, 0x00);
