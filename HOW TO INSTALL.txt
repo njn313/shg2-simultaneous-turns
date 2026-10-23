@@ -14,6 +14,7 @@ BEFORE YOU START
   mod changes the game's engine DLL.
 - Everyone in the game must install this SAME zip. Different builds can't play together.
 - Either EVERYONE uses the 8-player co-op mod, or NOBODY does.
+- Everyone picks the SAME turn mode when installing.
 - Turn off all other mods.
 
 
@@ -23,14 +24,19 @@ INSTALL
 2. If you play with the 8-player co-op mod: install that one FIRST.
 3. Unzip this file anywhere (e.g. your Desktop). Keep all files together in their folder.
 4. Double-click  Install.bat
+   - It asks for the turn mode. Everyone must choose the same:
+       1 (or just Enter) = hybrid: players at war with each other play one after the other
+       2 = simultaneous: all players always play at the same time, even at war
    - If Windows says "Windows protected your PC": click "More info", then "Run anyway".
    - The installer finds the game in your Steam libraries by itself. If it can't, open
      PowerShell in this folder and run:
        powershell -ExecutionPolicy Bypass -File install.ps1 -GamePath "D:\...\Total War SHOGUN 2"
 5. At the end it prints the SHA-256 hash of empire.retail.dll. Compare it with the host.
    For this build it must start with:
-     941E8CA9   (without the 8-player mod)
-     17A327AE   (with the 8-player co-op mod v1.4)
+     75B2FBF8   (hybrid, without the 8-player mod)
+     337C19C4   (hybrid, with the 8-player co-op mod v1.4)
+     E9F99F9E   (simultaneous, without the 8-player mod)
+     941DCD15   (simultaneous, with the 8-player co-op mod v1.4)
 6. Start Shogun 2 from Steam as usual and join or host a multiplayer campaign.
 
 If you had an older version of this mod installed, just run Install.bat again: it
