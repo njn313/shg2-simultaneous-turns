@@ -3,14 +3,14 @@
 In a multiplayer campaign of Total War: SHOGUN 2, human players who are not at war with each other play their turns
 **at the same time** instead of waiting for each other. The AI clans still move one after another.
 
-Works on its own (the normal 2-player campaign) and together with the **8-player co-op mod v1.4** by Tasman Modding
+Works on its own (the normal 2-player campaign) and together with the **8-player co-op mod v1.11** by Tasman Modding
 (a separate download) for up to 8 players. On its own it also brings the 8-player mod's desync fixes (below); with
 the 8-player mod installed, that mod's own versions are used.
 
 ## What it does
 | | |
 |---|---|
-| **Shared turns (experimental)** | Human players who are not at war with each other play their turns **at the same time**. Pressing End Turn only ends your own part: the AI clans move once the last of you has ended (or the turn timer runs out). A human at war with another human still plays alone (**hybrid** turn mode, the default); in the **simultaneous** turn mode every human always plays at the same time, even at war (chosen when installing, see below). Every player of the group can move, attack, build, recruit units and agents, use diplomacy, the clan button and disband units until they end their turn. One negotiation at a time: while one player negotiates (or answers an attack popup), the others' diplomacy waits; a diplomacy screen opened before that shows the clan but its offers do nothing, so close it and try again a moment later. Each player's armies find their way with their own clan's view of the map (fog of war, wars, right of passage), and moves longer than one turn (and new units walking to their general) carry on when the shared turn ends, for every player. Any player of the group can declare war on an AI clan from the attack popup (it opens their diplomacy screen). When the AI attacks a player's army, that player gets the pre-battle choice as usual. When a player of the group fights a battle, everyone waits for it as in the normal game (nobody moves meanwhile); afterwards an army whose move ran into the battle carries on, for every player. A save made during a shared turn keeps it: after loading it (or after a resync) whoever had ended stays ended, and nobody plays twice in the same round. |
+| **Shared turns (experimental)** | Human players who are not at war with each other play their turns **at the same time**. Pressing End Turn only ends your own part: the AI clans move once the last of you has ended (or the turn timer runs out). A human at war with another human still plays alone (**hybrid** turn mode, the default); in the **simultaneous** turn mode every human always plays at the same time, even at war (chosen when installing, see below). Every player of the group can move, attack, build, recruit units and agents, use diplomacy, the clan button and disband units until they end their turn. One negotiation at a time: while one player negotiates (or answers an attack popup), the others' diplomacy waits; a diplomacy screen opened before that shows the clan but its offers do nothing, so close it and try again a moment later. Each player's armies find their way with their own clan's view of the map (fog of war, wars, right of passage), and moves longer than one turn (and new units walking to their general) carry on when the shared turn ends, for every player. Any player of the group can declare war on an AI clan from the attack popup (it opens their diplomacy screen). When the AI attacks a player's army, that player gets the pre-battle choice as usual. When a player of the group fights a battle, everyone waits for it as in the normal game (nobody moves meanwhile); afterwards an army whose move ran into the battle carries on, for every player. A save made during a shared turn keeps it: after loading it (or after a resync) whoever had ended stays ended, and nobody plays twice in the same round. If a player leaves during a shared turn, or their clan goes to the AI because a save is resumed without them (8-player mod), that clan counts as having ended: the others carry on, and the AI plays it from its next turn. |
 | **Desync: save screen bug** | Opening the Save or Load screen switched that PC's maths and text rules to its Windows language for the rest of the session (e.g. decimal comma on German, Czech, French or Russian Windows), so it no longer matched the other players. Fixed: those screens now only change how dates are shown. |
 | **Desync: floating-point drift** | The game never locked the CPU's floating-point settings, so anything that changed them on one PC (overlays, anti-virus, drivers, alt-tabbing) made that PC calculate slightly differently. Fixed: the settings are reset to the game's defaults every frame and every battle tick. |
 | **Desync recovery** | If a campaign still goes out of sync, the resync starts by itself instead of waiting for someone to press OK (Cancel used to drop the player). |
@@ -31,16 +31,17 @@ Together with the 8-player mod:
 - To **add** the 8-player mod later: uninstall this mod, install the 8-player mod, install this mod again.
 - **Reinstalling or uninstalling the 8-player mod** removes this mod as well. Run `Install.bat` again afterwards
   (after a reinstall).
-- This version knows the 8-player mod **v1.4** only. With another version the installer refuses, and changes nothing.
+- This version knows the 8-player mod **v1.11** only. With the older v1.4 the installer asks you to update the 8-player
+  mod first; with any other version it refuses. Either way it changes nothing.
 
 Everyone must end up with the same hash, or they can't join each other. The installer prints it:
 
 | Installed on, turn mode | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game, hybrid | `75B2FBF84F33959A3EA19DD297492586D139318FF554010CF1E4AE06E68A4199` |
-| the 8-player co-op mod v1.4, hybrid | `337C19C42621BA3671A523641033E2DA7570808FDC1E7380BCDE888B192349FE` |
-| the original game, simultaneous | `E9F99F9E92BF9D6F927424E62CAFB4CBFBD7249A198612A380DB36CB13D67106` |
-| the 8-player co-op mod v1.4, simultaneous | `941DCD1509C8B0FD4345747250EF5A73AD0D42F7E202467C4A4756CB9E4C196A` |
+| the original game, hybrid | `213FE4799C5645DFFA1B29A36F492380D3428837239B59E43A8AB6CF52EAFBDF` |
+| the 8-player co-op mod v1.11, hybrid | `F2F15E267F42FC8C7BD9086C885FB907FA88B0991FB2648A068647D3BA83C9D8` |
+| the original game, simultaneous | `744F3CF598EC66215226804B12F1F69C4B89F35FD9950D4032FFE1538763EC6A` |
+| the 8-player co-op mod v1.11, simultaneous | `D71825943EEC7C27E23352EFE4E33E8DCB8C2EDFAEF5ACA4DF142C037A07C0C8` |
 
 So either everyone has the 8-player mod, or nobody does, and everyone picks the same turn mode:
 - **hybrid** (default): players who are not at war with each other play at the same time; a player at war with
@@ -53,7 +54,8 @@ To switch the mode, everyone runs `Install.bat` again and picks the new one. For
 the other, uninstall.
 
 ## Before you play
-- **Use spare Steam accounts.** Shogun 2 multiplayer is VAC-protected and this mod changes the engine DLL.
+- **EXPERIMENTAL.** Steam no longer lists VAC for Shogun 2, but this mod changes the engine DLL: a spare Steam
+  account is the extra-safe choice.
 - It only works on the current Steam version of the game; the installer refuses anything else.
 - To give desyncs fewer chances: everyone has the same mods (ideally none besides these) and the same game version.
 
