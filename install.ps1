@@ -118,6 +118,6 @@ else {
 "Every player must see the same hash: the same turn mode, and all with the 8-player mod or all without (README lists all four)."
 ""
 "Reminders:"
-"  - EXPERIMENTAL. Shogun 2 multiplayer is VAC-protected and this changes the engine DLL: use spare Steam accounts."
+"  - EXPERIMENTAL. Steam no longer lists VAC for Shogun 2, but this changes the engine DLL: a spare account is the extra-safe choice."
 "  - Undo:  Uninstall.bat  (or install.ps1 -Uninstall)"
 "  - Adding the 8-player mod later: uninstall this first, install the 8-player mod, then install this again."

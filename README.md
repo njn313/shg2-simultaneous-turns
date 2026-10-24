@@ -54,7 +54,8 @@ To switch the mode, everyone runs `Install.bat` again and picks the new one. For
 the other, uninstall.
 
 ## Before you play
-- **Use spare Steam accounts.** Shogun 2 multiplayer is VAC-protected and this mod changes the engine DLL.
+- **EXPERIMENTAL.** Steam no longer lists VAC for Shogun 2, but this mod changes the engine DLL: a spare Steam
+  account is the extra-safe choice.
 - It only works on the current Steam version of the game; the installer refuses anything else.
 - To give desyncs fewer chances: everyone has the same mods (ideally none besides these) and the same game version.
 

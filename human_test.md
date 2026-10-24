@@ -4,7 +4,7 @@ How to test a new build of the mod in real multiplayer games, and what to collec
 The short checklist is in `README.md` ("Test plan"); this file has the details.
 
 ## Before a session
-- **Spare Steam accounts only.** Multiplayer is VAC-protected and this mod changes the engine DLL.
+- **EXPERIMENTAL.** Steam no longer lists VAC for Shogun 2, but this mod changes the engine DLL: a spare Steam account is the extra-safe choice.
 - Everyone installs the same build, either all with the 8-player co-op mod v1.11 or all without. The DLL hash the
   installer prints must be the same for everyone and match the one in `README.md`. Write down the first 8 letters
   of the DLL hash: it says which build you tested (and whether the 8-player mod was installed).

@@ -10,8 +10,8 @@ It works on its own (2 players) and together with the 8-player co-op mod v1.11.
 
 BEFORE YOU START
 ----------------
-- Use a SPARE Steam account if you can. Shogun 2 multiplayer is VAC-protected and this
-  mod changes the game's engine DLL.
+- EXPERIMENTAL. Steam no longer lists VAC for Shogun 2, but this mod changes the game's
+  engine DLL: a SPARE Steam account is the extra-safe choice.
 - Everyone in the game must install this SAME zip. Different builds can't play together.
 - Either EVERYONE uses the 8-player co-op mod, or NOBODY does.
 - Everyone picks the SAME turn mode when installing.
