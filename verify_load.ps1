@@ -112,14 +112,14 @@ if ((Hex $loc) -ne '6A 05 E8') { $ok = $false }
 $endTurn = Mem 0x1111E8BF 12
 "end turn faction   : {0}" -f (Hex $endTurn)
 if ((Hex $endTurn) -ne '8B 81 B0 00 00 00 90 90 90 90 90 90') { $ok = $false }
-# the mod's data from 11CB1538 (group state, log flags, pathfinder state, the resync key dword 11CB15B0 (standalone
-# only; unused but covered on the 8-player mod), the log's pathfinder dword 11CB15B4): mapped, inside .data, zero
-$need = 0x80
+# the mod's data from DataFloor 11CB1C00 (group state, log flags, pathfinder state, the save's group, the attack
+# table; above the 8-player mod's, which ends at 11CB1910 in v1.11): mapped, inside .data, zero
+$floor = 0x11CB1C00; $need = 0x264
 $dataEnd = [int64]$secs['.data'].Va + $secs['.data'].Size
-$data = Mem 0x11CB1538 $need
+$data = Mem $floor $need
 $nonzero = @($data | Where-Object { $_ -ne 0 }).Count
-".data              : ends at {0:X8} (needs {1:X8}); mod data nonzero bytes: {2}" -f $dataEnd, (0x11CB1538 + $need), $nonzero
-if ($dataEnd -lt (0x11CB1538 + $need) -or $nonzero -ne 0) { $ok = $false }
+".data              : ends at {0:X8} (needs {1:X8}); mod data nonzero bytes: {2}" -f $dataEnd, ($floor + $need), $nonzero
+if ($dataEnd -lt ($floor + $need) -or $nonzero -ne 0) { $ok = $false }
 
 [void][St]::FreeLibrary($h)
 if ($ok) { "RESULT: patched DLL loads and the patch is intact in memory" } else { "RESULT: PROBLEM - see above"; exit 1 }

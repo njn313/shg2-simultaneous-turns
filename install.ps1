@@ -1,5 +1,5 @@
 # Shogun 2 Shared Turns (experimental): installer and uninstaller.
-# Patches the player's own empire.retail.dll: the original game DLL, or the 8-player co-op mod v1.4 when that is
+# Patches the player's own empire.retail.dll: the original game DLL, or the 8-player co-op mod v1.11 when that is
 # installed (install the 8-player mod first, then this one). The DLL it patched is kept next to it as
 # empire.retail.dll.sharedturns-base and put back by -Uninstall. Every player must end up with the same DLL hash,
 # so everyone picks the same turn mode (asked when -Mode isn't given; Enter = hybrid).
@@ -46,11 +46,15 @@ if (Get-Process -Name 'Shogun2' -ErrorAction SilentlyContinue) { throw 'Close Sh
 
 function BaseName($hash) {
 	if ($hash -eq [SharedTurnsPatcher]::OriginalSha256) { return 'the original game DLL' }
-	if ($hash -eq [SharedTurnsPatcher]::EightPlayerV14Sha256) { return 'the 8-player co-op mod v1.4' }
+	if ($hash -eq [SharedTurnsPatcher]::EightPlayerV111Sha256) { return 'the 8-player co-op mod v1.11' }
 	return $null
 }
+# 8-player mod versions this mod no longer builds on: uninstalling still puts them back, installing asks to update
+$old8p = @{ 'AE3A3F4E25DF8EFC9C0A4BC439AF287507558D65A3191B6F508FDD47ACF56424' = 'the 8-player co-op mod v1.4' }
 $current = Sha $dll
 $installed = [SharedTurnsPatcher]::IsThisMod($dll)
+$baseHash = $null
+if (Test-Path $base) { $baseHash = Sha $base }
 
 if ($Uninstall) {
 	if (-not $installed) {
@@ -59,7 +63,8 @@ if ($Uninstall) {
 		return
 	}
 	if (-not (Test-Path $base)) { throw 'The backup empire.retail.dll.sharedturns-base is missing. Use Steam "Verify integrity of game files" (then reinstall the 8-player mod if you use it).' }
-	$name = BaseName (Sha $base)
+	$name = BaseName $baseHash
+	if (-not $name) { $name = $old8p[$baseHash] }
 	if (-not $name) { throw 'The backup empire.retail.dll.sharedturns-base is not a DLL this mod knows; not restoring it. Use Steam "Verify integrity of game files".' }
 	Copy-Item $base $dll -Force
 	Remove-Item $base
@@ -68,6 +73,13 @@ if ($Uninstall) {
 }
 
 # ---- install / update ----------------------------------------------------------------------------------------------
+# an older 8-player mod, on its own or under an earlier build of this mod: it must be updated first
+$old = $old8p[$current]
+if (-not $old -and $installed -and $baseHash) { $old = $old8p[$baseHash] }
+if ($old) {
+	throw ("This version of Shared Turns works with the 8-player co-op mod v1.11 only, and this game has $old. " +
+		"Update the 8-player mod first (its Install.bat), then run this again. Nothing was changed.")
+}
 if (-not $Mode) {
 	""
 	"Turn mode (every player must choose the same one):"
@@ -86,11 +98,11 @@ if (BaseName $current) {
 elseif ($installed) {
 	# an earlier build of this mod: build again from the DLL it was made from
 	if (-not (Test-Path $base)) { throw 'Shared Turns is installed but its backup empire.retail.dll.sharedturns-base is missing. Use Steam "Verify integrity of game files" (then reinstall the 8-player mod if you use it) and run this again.' }
-	$from = BaseName (Sha $base)
+	$from = BaseName $baseHash
 	if (-not $from) { throw 'The backup empire.retail.dll.sharedturns-base is not a DLL this mod knows. Use Steam "Verify integrity of game files" and run this again.' }
 }
 else {
-	throw ("empire.retail.dll (sha256 $current) is neither the original game DLL, nor the 8-player co-op mod v1.4, nor a build " +
+	throw ("empire.retail.dll (sha256 $current) is neither the original game DLL, nor the 8-player co-op mod v1.11, nor a build " +
 		"of this mod. Another mod or another game version: not touching it. (A newer 8-player mod needs a newer Shared Turns.)")
 }
 $tmp = "$dll.sharedturns-new"

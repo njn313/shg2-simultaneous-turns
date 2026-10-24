@@ -4,11 +4,11 @@
 //
 // Inputs it accepts (anything else is refused):
 //  - the original empire.retail.dll of the current Steam build (OriginalSha256);
-//  - the 8-player co-op mod v1.4 (Tasman Modding) built from that original (EightPlayerV14Sha256), so both mods can
+//  - the 8-player co-op mod v1.11 (Tasman Modding) built from that original (EightPlayerV111Sha256), so both mods can
 //    be installed together: the 8-player mod first, this one on top.
 // All new code goes into a section of its own (".s2st", appended after the last section; the header has room for
 // several more); hooks are relative jumps/calls; data lives in .data's slack from DataFloor on, past the 8-player
-// mod's two dwords. Same input -> same output on every PC: no timestamps, no paths, no unordered collections.
+// mod's data. Same input -> same output on every PC: no timestamps, no paths, no unordered collections.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -17,12 +17,13 @@ using System.Text;
 
 public static class SharedTurnsPatcher {
 	public const string OriginalSha256 = "022FAE2E2DA92B59B8B1B8EE52887003C624E3C8ECA060B209F5D792A7F874F5";
-	public const string EightPlayerV14Sha256 = "AE3A3F4E25DF8EFC9C0A4BC439AF287507558D65A3191B6F508FDD47ACF56424";
+	public const string EightPlayerV111Sha256 = "971C7A955B045433F54161126A6866B3F37541A90CB23B2F3C88DB9A8ECD2280";
 	public const string SectionName = ".s2st";
 	const uint ImageBase = 0x10000000;
-	// .data ends at 11CB152C in the original; the 8-player mod keeps two dwords at 11CB1530 / 11CB1534. Ours start
-	// here and must stay in the same page (11CB2000 is _RDATA)
-	const uint DataFloor = 0x11CB1538;
+	// .data ends at 11CB152C in the original; the 8-player mod v1.11 grows it to 11CB1910. Ours start here, leaving it
+	// room for later versions, and must stay in the same page (11CB2000 is _RDATA); Build refuses an input whose .data
+	// already reaches DataFloor
+	const uint DataFloor = 0x11CB1C00;
 
 	// ---- the image being patched (file layout) -------------------------------------------------------------------
 	static byte[] b;
@@ -217,10 +218,10 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.20 (milestones 1, 2 and 3, milestone 4 part 1, turn modes hybrid / simultaneous, no battle with a target that moved away, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
+	const string LogBuildTag = "shared turns 0.21 (milestones 1, 2 and 3, milestone 4 part 1, turn modes hybrid / simultaneous, no battle with a target that moved away, members handed to the AI end, 8-player mod v1.11, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
-	const uint LogOpenedVa = 0x11CB158C;       // 1 once this process has moved the previous log to .old
-	const uint LogCloseWaitVa = 0x11CB1590;    // 1 once "lead's end turn waits" is logged for the running group
+	const uint LogOpenedVa = DataFloor + 0x54;      // 1 once this process has moved the previous log to .old
+	const uint LogCloseWaitVa = DataFloor + 0x58;   // 1 once "lead's end turn waits" is logged for the running group
 	const uint CreateFileWIat = 0x115A1144;
 	const uint WriteFileIat = 0x115A1154;
 	const uint CloseHandleIat = 0x115A1158;
@@ -239,7 +240,7 @@ public static class SharedTurnsPatcher {
 		"END_REQ %f flag %b -> end-turn lock set: ignored",                 // 8
 		"END_REQ %f flag %b -> ended",                                      // 9
 		"LATCH %f end request held until it can end",                       // 10
-		"DROP %f player left or faction removed: counts as ended",          // 11
+		"DROP %f handed to the AI or removed: counts as ended",             // 11
 		"CLOSE all ended, lead %f can't end yet (waits)",                   // 12
 		"CLOSE all ended, lead %f ends the turn",                           // 13
 		"TURN_END group, pathfinder set up %d times for members",           // 14
@@ -1124,7 +1125,7 @@ public static class SharedTurnsPatcher {
 		// GroupStart (what the thunk at 10701DB0, "mov ecx,[ecx+2Ch] / jmp FUN_105fd090", called by the transition
 		// FUN_1068a8d0 for the new current faction, now reaches) then runs the turn starts; after loading a save made
 		// during a turn GroupTick calls it alone (the turn starts ran before the save).
-		// Members: human, not removed (+7A8h), not skipped (+894h), not AI-driven (+895h, dropped player), no
+		// Members: human, not removed (+7A8h), not skipped (+894h), not without a CAI step (+895h, a saved flag), no
 		// revolution pending (+798h: it plays alone, so the vanilla proxy turn runs; a member's revolution starts in
 		// its turn start in GroupStart, after the group was formed), alive, not in played[], not at war with any
 		// member (hybrid mode only: the simultaneous build leaves the war test out); only factions after the lead
@@ -1171,7 +1172,7 @@ public static class SharedTurnsPatcher {
 		a.J8(0x75, "scan");                               // jne scan
 		a.Raw(0x80, 0xBE, 0x94, 0x08, 0x00, 0x00, 0x00);  // cmp byte ptr [esi+894h],0 (skipped in turn order)
 		a.J8(0x75, "scan");                               // jne scan
-		a.Raw(0x80, 0xBE, 0x95, 0x08, 0x00, 0x00, 0x00);  // cmp byte ptr [esi+895h],0 (no player: AI ends its turn)
+		a.Raw(0x80, 0xBE, 0x95, 0x08, 0x00, 0x00, 0x00);  // cmp byte ptr [esi+895h],0 (no CAI step: auto-ended)
 		a.J8(0x75, "scan");                               // jne scan
 		a.Raw(0x80, 0xBE, 0x98, 0x07, 0x00, 0x00, 0x00);  // cmp byte ptr [esi+798h],0 (a revolution pending)
 		a.J8(0x75, "scan");                               // jne scan
@@ -1484,8 +1485,12 @@ public static class SharedTurnsPatcher {
 	static uint EmitGroupTick(Asm a, uint groupEndTurn, uint groupBuild, uint groupRestore, uint log) {
 		// campaign tick FUN_10703ea0, replaces "cmp byte [ebx+155Fh],0 / je 10704216" at 107041CA (the +155Fh
 		// retry; ebx = campaign). While a group plays (current = lead, phase 1):
-		//   1. members whose player dropped (+895h) or that were removed (+7A8h) count as ended (vanilla's auto-end
-		//      at 10704344.. only looks at the current faction, and its CanEndTurn now waits for the group);
+		//   1. members handed to the AI (+6A0h cleared by CCQ_FACTION_SWITCH_HUMAN_TO_AI, FUN_108868f0 ->
+		//      FUN_10600c20: a player who left, or the 8-player mod v1.11 giving a missing player's clan to the AI
+		//      after a resume), without a CAI step (+895h) or removed (+7A8h) count as ended. Nobody would end such a
+		//      member's part (the CAI only steps for the current faction), and an AI lead marked ended can't take
+		//      its CAI turn now (CanEndTurn refuses it until the group closes), so it can't end the group early
+		//      either (vanilla's auto-end at 10704344.. only looks at the current faction);
 		//   2. latched members: retry CanEndTurn, then end them (GroupEndTurn with flag 1, as vanilla's retry);
 		//   3. every member ended: the lead's real end turn FUN_106a5da0(lead, 1), retried each tick until
 		//      CanEndTurn passes.
@@ -1534,6 +1539,8 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x3B, 0x37);                                // cmp esi,[edi]
 		a.J8(0x73, "latches");                            // jae latches
 		a.Raw(0x8B, 0x44, 0xB7, 0x34);                    // mov eax,[edi+esi*4+34h]
+		a.Raw(0x80, 0xB8, 0xA0, 0x06, 0x00, 0x00, 0x00);  // cmp byte ptr [eax+6A0h],0 (human)
+		a.J8(0x74, "dropped");                            // je dropped
 		a.Raw(0x80, 0xB8, 0x95, 0x08, 0x00, 0x00, 0x00);  // cmp byte ptr [eax+895h],0
 		a.J8(0x75, "dropped");                            // jne dropped
 		a.Raw(0x80, 0xB8, 0xA8, 0x07, 0x00, 0x00, 0x00);  // cmp byte ptr [eax+7A8h],0
@@ -3669,10 +3676,14 @@ public static class SharedTurnsPatcher {
 		SymbolMap.Clear();
 		string inHash = Sha(b);
 		if (inHash == OriginalSha256) BaseName = "original";
-		else if (inHash == EightPlayerV14Sha256) BaseName = "8-player mod v1.4";
-		else throw new Exception("input is neither the original empire.retail.dll this mod was made for nor the 8-player mod v1.4 built from it (sha256 " + inHash + ")");
+		else if (inHash == EightPlayerV111Sha256) BaseName = "8-player mod v1.11";
+		else throw new Exception("input is neither the original empire.retail.dll this mod was made for nor the 8-player mod v1.11 built from it (sha256 " + inHash + ")");
 		ReadHeaders();
 		ReadRelocs();
+		// the 8-player mod keeps its data at the end of .data, below ours (a later version accepted here must too)
+		int dataSec = FindSection(".data");
+		uint dataEnd = SecVa(dataSec) + U32(SecOff(dataSec) + 8);
+		if (dataEnd > DataFloor) throw new Exception(string.Format("the input's .data reaches {0:X8}, past this mod's data at {1:X8}", dataEnd, DataFloor));
 
 		var s = new Asm { Va = ImageBase + U32(optOff + 56) };   // the new section goes right after the last one
 		uint log = Sym("Log", EmitLog(s));
@@ -3681,6 +3692,7 @@ public static class SharedTurnsPatcher {
 		Sym("LogData", s.Here);
 		EmitLogData(s);
 		AddSection(SectionName, s.Bytes);
+		Sym("DataFloor", DataFloor);   // for re\build\compat.py: this mod's .data starts here
 
 		File.WriteAllBytes(outPath, b);
 		return string.Format("patched ({0}, {5} turns): {1} at {2:X8}, {3} bytes; output sha256 {4}", BaseName, SectionName, s.Va, s.Bytes.Count, Sha(b), TurnMode);
