@@ -7,6 +7,8 @@ Works on its own (the normal 2-player campaign) and together with the **8-player
 (a separate download) for up to 8 players. On its own it also brings the 8-player mod's desync fixes (below); with
 the 8-player mod installed, that mod's own versions are used.
 
+Check discord for more information: https://discord.gg/djhTAyMFeU
+
 ## What it does
 | | |
 |---|---|
