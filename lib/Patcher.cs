@@ -3324,7 +3324,7 @@ public static class SharedTurnsPatcher {
 	const uint FactionKey = 0x105ECEF0;        // thiscall(f) -> eax = [f+51Ch], its key (a static "rebels" when dead)
 	const uint ImageMetrics = 0x10F9B820;      // thiscall(comp; image, x, y, w, h) ret 14h: that image in each state (Lua SetImageMetrics)
 	const uint ImageColour = 0x10F9B250;       // thiscall(comp; image, &ARGB) ret 8: its colour in each state (Lua SetImageColour)
-	const uint HudCoverColour = 0xFFB0C4D4;    // opaque light blue-grey, about the bar the flags sit on
+	const uint HudCoverColour = 0xFFDCE3E8;    // opaque light grey-white: a flag at 40% over it looks whitened, faded
 	// the components of HudGroupFlags' strings s = 0..4, 7 bytes each: flag_path (flag_3), prev_flag_1, next_flag_1,
 	// prev_flag_2, next_flag_2
 	const string HudSlotNames = "flag_3\0flag_2\0flag_4\0flag_1\0flag_5\0";
@@ -3720,9 +3720,10 @@ public static class SharedTurnsPatcher {
 		// itself (the lead's "clan (player)") is emptied, not hidden: the countdown dy_timer is its child. The glow ring
 		// (a sibling drawn just before flag_3, at the layout's -2 / -2 from it) goes behind slot L, which is flag_3: this
 		// PC's own clan; hidden when that clan isn't shown. It is no ring but two filled 68 px discs (colour_picker_circle
-		// .tga: the ring gold, its child orange at 75%), seen only as the 2 px around an opaque flag; once that clan has
-		// ended, the child becomes a 64 px disc in HudCoverColour right behind the flag, so the faded flag shows that
-		// instead of gold and the gold stays a ring. Changes every register but ebx and esi.
+		// .tga: the ring gold, its child orange at 75% and hidden by the layout), seen only as the 2 px around an opaque
+		// flag; once that clan has ended, the child becomes a shown 64 px disc in HudCoverColour right behind the flag, so
+		// the faded flag looks whitened instead of gold-filled and the gold stays a ring. Changes every register but ebx
+		// and esi.
 		// Frame: +00 the name, +0Ch the technique (engine strings), +18h the position, +20h zero shader params, +30h n,
 		// +34h member 0's x offset, +38h the child, +3Ch the params used, +40h max(L, 0), +44h L, +48h the names' colour
 		uint at = a.Here;
@@ -3926,6 +3927,9 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x8B, 0xCF);                                // mov ecx,edi
 		a.Call(ImageColour);
 		a.Raw(0x83, 0xC4, 0x04);                          // add esp,4
+		a.Raw(0x6A, 0x01);                                // push 1
+		a.Raw(0x8B, 0xCF);                                // mov ecx,edi
+		a.Call(SetVisible);                               // shown: the layout hides it (its visible byte is 0)
 		a.J8(0xEB, "done");                               // jmp done
 		a.Mark("hide");
 		a.Raw(0x6A, 0x00);                                // push 0                  (ecx = the ring)
