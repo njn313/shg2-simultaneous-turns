@@ -113,7 +113,7 @@ $endTurn = Mem 0x1111E8BF 12
 "end turn faction   : {0}" -f (Hex $endTurn)
 if ((Hex $endTurn) -ne '8B 81 B0 00 00 00 90 90 90 90 90 90') { $ok = $false }
 # the mod's data from DataFloor 11CB1C00 (group state, log flags, pathfinder state, the save's group, the attack
-# table; above the 8-player mod's, which ends at 11CB1910 in v1.11): mapped, inside .data, zero
+# table; above the 8-player mod's, which ends at 11CB1910 in v1.11 / v1.12): mapped, inside .data, zero
 $floor = 0x11CB1C00; $need = 0x264
 $dataEnd = [int64]$secs['.data'].Va + $secs['.data'].Size
 $data = Mem $floor $need

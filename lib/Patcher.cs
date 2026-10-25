@@ -1,11 +1,13 @@
 // Builds the Shared Turns patch of Shogun 2's empire.retail.dll: human clans that are not at war with each other play
 // their turns at the same time (AI turns stay one after another), plus a diagnostics log. Never modifies its input:
-// it checks the input is exactly a build it knows, and writes a new file.
+// it checks the input is a DLL it builds on, and writes a new file.
 //
 // Inputs it accepts (anything else is refused):
 //  - the original empire.retail.dll of the current Steam build (OriginalSha256);
-//  - the 8-player co-op mod v1.11 (Tasman Modding) built from that original (EightPlayerV111Sha256), so both mods can
-//    be installed together: the 8-player mod first, this one on top.
+//  - the 8-player co-op mod (Tasman Modding) built from that original, so both mods can be installed together: the
+//    8-player mod first, this one on top. v1.12 (EightPlayerV112Sha256) is the version this build was checked with;
+//    any other one (its section .s2mp) is built on too, the installer warns. Build still refuses one that changes
+//    a byte this mod patches (ExpectBytes), has data past DataFloor, or jumps back into one of our patches.
 // All new code goes into a section of its own (".s2st", appended after the last section; the header has room for
 // several more); hooks are relative jumps/calls; data lives in .data's slack from DataFloor on, past the 8-player
 // mod's data. Same input -> same output on every PC: no timestamps, no paths, no unordered collections.
@@ -17,18 +19,27 @@ using System.Text;
 
 public static class SharedTurnsPatcher {
 	public const string OriginalSha256 = "022FAE2E2DA92B59B8B1B8EE52887003C624E3C8ECA060B209F5D792A7F874F5";
-	public const string EightPlayerV111Sha256 = "971C7A955B045433F54161126A6866B3F37541A90CB23B2F3C88DB9A8ECD2280";
+	// the 8-player mod version this build was checked with (compat.py, verify_load.ps1): the only officially supported one
+	public const string EightPlayerV112Sha256 = "E6722B2088594A31938C50B41848ED1241BBC60C5B0F020D30D7B7B5B0F0E650";
+	// 8-player mod builds of the original known by name (sha256, version); every version adds its code as .s2mp
+	static readonly string[,] EightPlayerKnown = {
+		{ "AE3A3F4E25DF8EFC9C0A4BC439AF287507558D65A3191B6F508FDD47ACF56424", "1.4" },
+		{ "971C7A955B045433F54161126A6866B3F37541A90CB23B2F3C88DB9A8ECD2280", "1.11" },
+		{ EightPlayerV112Sha256, "1.12" } };
+	const string EightPlayerSection = ".s2mp";
+	const uint OriginalTextEnd = 0x115A0C3E;   // the original's .text VirtualSize; the 8-player mod adds code past it
 	public const string SectionName = ".s2st";
 	const uint ImageBase = 0x10000000;
-	// .data ends at 11CB152C in the original; the 8-player mod v1.11 grows it to 11CB1910. Ours start here, leaving it
-	// room for later versions, and must stay in the same page (11CB2000 is _RDATA); Build refuses an input whose .data
-	// already reaches DataFloor
+	// .data ends at 11CB152C in the original; the 8-player mod v1.11 / v1.12 grows it to 11CB1910. Ours start here,
+	// leaving it room for later versions, and must stay in the same page (11CB2000 is _RDATA); Build refuses an input
+	// whose .data already reaches DataFloor
 	const uint DataFloor = 0x11CB1C00;
 
 	// ---- the image being patched (file layout) -------------------------------------------------------------------
 	static byte[] b;
 	static int peOff, optOff, secTableOff, nSec;
 	static uint[] relocVas;   // every address a HIGHLOW relocation rewrites (4 bytes each), sorted
+	static readonly List<uint[]> patched = new List<uint[]>();   // (va, length) of every PutBytes, for CheckReentries
 	public static string BaseName;
 	// the turn mode, chosen at install (every player must choose the same: the DLLs differ): "hybrid" = humans not at
 	// war with each other share a turn, a human at war with one of them plays alone; "simultaneous" = every human
@@ -101,6 +112,28 @@ public static class SharedTurnsPatcher {
 	static void PutBytes(uint va, byte[] bytes) {
 		CheckNoReloc(va, bytes.Length);
 		Array.Copy(bytes, 0, b, VaToOff(va), bytes.Length);
+		patched.Add(new uint[] { va, (uint)bytes.Length });
+	}
+
+	// The 8-player mod's code jumps back into the game's at many places (its hooks' resume points, the engine functions
+	// it calls): none may land inside one of our patches, where it would run from the middle of our jmp. compat.py
+	// checks this with a disassembler for the version it is run on; this raw scan of every rel32 call / jmp / jcc in
+	// the 8-player mod's code (its .text code past the original end, and .s2mp) covers any version.
+	static void CheckReentries() {
+		int text = FindSection(".text"), own = FindSection(EightPlayerSection);
+		var regions = new uint[][] {
+			new uint[] { OriginalTextEnd, SecVa(text) + Math.Min(U32(SecOff(text) + 8), U32(SecOff(text) + 16)) },
+			new uint[] { SecVa(own), SecVa(own) + Math.Min(U32(SecOff(own) + 8), U32(SecOff(own) + 16)) } };
+		foreach (var r in regions)
+			for (uint va = r[0]; va + 5 <= r[1]; va++) {
+				int o = VaToOff(va);
+				int len = b[o] == 0xE8 || b[o] == 0xE9 ? 5 : b[o] == 0x0F && (b[o + 1] & 0xF0) == 0x80 ? 6 : 0;
+				if (len == 0 || va + len > r[1]) continue;
+				uint target = unchecked(va + (uint)len + (uint)BitConverter.ToInt32(b, o + len - 4));
+				foreach (var p in patched)
+					if (target > p[0] && target < p[0] + p[1])
+						throw new Exception(string.Format("the 8-player mod's code at {0:X8} jumps to {1:X8}, inside this mod's patch {2:X8}+{3}", va, target, p[0], p[1]));
+			}
 	}
 
 	// "call expected" at 'at' becomes "call target"
@@ -3665,6 +3698,49 @@ public static class SharedTurnsPatcher {
 		return FindSection(SectionName) >= 0;
 	}
 
+	// what a DLL is as an input to Build ("the original game DLL", "the 8-player co-op mod v1.12", ...), or null when this
+	// mod doesn't build on it: another game build or mod, or a build of this mod (the installer rebuilds from its backup).
+	// supported: the original, or the 8-player version this build was checked with; the installer warns about the rest
+	static string Describe(byte[] d, string hash, out bool supported) {
+		supported = hash == OriginalSha256 || hash == EightPlayerV112Sha256;
+		if (hash == OriginalSha256) return "the original game DLL";
+		b = d;
+		ReadHeaders();
+		if (FindSection(SectionName) >= 0 || FindSection(EightPlayerSection) < 0) return null;
+		for (int i = 0; i < EightPlayerKnown.GetLength(0); i++)
+			if (EightPlayerKnown[i, 0] == hash) return "the 8-player co-op mod v" + EightPlayerKnown[i, 1];
+		string version = EightPlayerVersion();
+		if (version == null) return "an unknown version of the 8-player co-op mod";
+		return "the 8-player co-op mod v" + version + " (a build this version of Shared Turns doesn't know)";
+	}
+
+	// the version the 8-player mod writes into its crash report ("Shogun 2 8-player co-op mod v1.12 crash report", since
+	// v1.5), read from its section; null when it has none
+	static string EightPlayerVersion() {
+		int i = FindSection(EightPlayerSection);
+		string text = Encoding.ASCII.GetString(b, (int)U32(SecOff(i) + 20), (int)Math.Min(U32(SecOff(i) + 8), U32(SecOff(i) + 16)));
+		const string tag = "8-player co-op mod v";
+		int at = text.IndexOf(tag, StringComparison.Ordinal);
+		if (at < 0) return null;
+		int start = at + tag.Length, end = start;
+		while (end < text.Length && end - start < 16 && (char.IsDigit(text[end]) || text[end] == '.')) end++;
+		return end > start ? text.Substring(start, end - start) : null;
+	}
+
+	// for the installer: Describe's name of a file (null: not an input), and whether it is officially supported
+	public static string InputName(string path) {
+		byte[] d = File.ReadAllBytes(path);
+		bool supported;
+		return Describe(d, Sha(d), out supported);
+	}
+
+	public static bool IsSupported(string path) {
+		byte[] d = File.ReadAllBytes(path);
+		bool supported;
+		Describe(d, Sha(d), out supported);
+		return supported;
+	}
+
 	public static string Build(string inPath, string outPath) {
 		return Build(inPath, outPath, "hybrid");
 	}
@@ -3674,12 +3750,14 @@ public static class SharedTurnsPatcher {
 		TurnMode = turnMode;
 		b = File.ReadAllBytes(inPath);
 		SymbolMap.Clear();
+		patched.Clear();
 		string inHash = Sha(b);
-		if (inHash == OriginalSha256) BaseName = "original";
-		else if (inHash == EightPlayerV111Sha256) BaseName = "8-player mod v1.11";
-		else throw new Exception("input is neither the original empire.retail.dll this mod was made for nor the 8-player mod v1.11 built from it (sha256 " + inHash + ")");
+		bool supported;
+		BaseName = Describe(b, inHash, out supported);
+		if (BaseName == null) throw new Exception("input is neither the original empire.retail.dll this mod was made for nor the 8-player co-op mod built from it (sha256 " + inHash + ")");
 		ReadHeaders();
 		ReadRelocs();
+		bool on8p = FindSection(EightPlayerSection) >= 0;
 		// the 8-player mod keeps its data at the end of .data, below ours (a later version accepted here must too)
 		int dataSec = FindSection(".data");
 		uint dataEnd = SecVa(dataSec) + U32(SecOff(dataSec) + 8);
@@ -3688,9 +3766,10 @@ public static class SharedTurnsPatcher {
 		var s = new Asm { Va = ImageBase + U32(optOff + 56) };   // the new section goes right after the last one
 		uint log = Sym("Log", EmitLog(s));
 		ApplyGroupTurns(s, log);
-		if (inHash == OriginalSha256) ApplyDesyncFixes(s, log);   // the 8-player mod has its own at these sites
+		if (!on8p) ApplyDesyncFixes(s, log);   // the 8-player mod has its own at these sites
 		Sym("LogData", s.Here);
 		EmitLogData(s);
+		if (on8p) CheckReentries();
 		AddSection(SectionName, s.Bytes);
 		Sym("DataFloor", DataFloor);   // for re\build\compat.py: this mod's .data starts here
 

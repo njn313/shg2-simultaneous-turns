@@ -5,7 +5,8 @@ This zip contains NO game files. The installer builds the mod from your own copy
 Total War: SHOGUN 2 (current Steam version) and changes one file in your game folder:
 empire.retail.dll (the file it changed is kept as empire.retail.dll.sharedturns-base).
 
-It works on its own (2 players) and together with the 8-player co-op mod v1.11.
+It works on its own (2 players) and together with the 8-player co-op mod v1.12. It also
+installs on other versions of the 8-player mod, with a warning (not officially supported).
 
 
 BEFORE YOU START
@@ -13,7 +14,7 @@ BEFORE YOU START
 - EXPERIMENTAL. Steam no longer lists VAC for Shogun 2, but this mod changes the game's
   engine DLL: a SPARE Steam account is the extra-safe choice.
 - Everyone in the game must install this SAME zip. Different builds can't play together.
-- Either EVERYONE uses the 8-player co-op mod, or NOBODY does.
+- Either EVERYONE uses the 8-player co-op mod (the SAME version), or NOBODY does.
 - Everyone picks the SAME turn mode when installing.
 - Turn off all other mods.
 
@@ -21,8 +22,8 @@ BEFORE YOU START
 INSTALL
 -------
 1. Close Shogun 2 completely.
-2. If you play with the 8-player co-op mod: install that one FIRST (version 1.11; if you
-   have an older one, update it first).
+2. If you play with the 8-player co-op mod: install that one FIRST (version 1.12 is the
+   one this build was checked with; with another version the installer warns you).
 3. Unzip this file anywhere (e.g. your Desktop). Keep all files together in their folder.
 4. Double-click  Install.bat
    - It asks for the turn mode. Everyone must choose the same:
@@ -35,9 +36,10 @@ INSTALL
 5. At the end it prints the SHA-256 hash of empire.retail.dll. Compare it with the host.
    For this build it must start with:
      213FE479   (hybrid, without the 8-player mod)
-     F2F15E26   (hybrid, with the 8-player co-op mod v1.11)
+     DAEC2B57   (hybrid, with the 8-player co-op mod v1.12)
      744F3CF5   (simultaneous, without the 8-player mod)
-     D7182594   (simultaneous, with the 8-player co-op mod v1.11)
+     7E318C87   (simultaneous, with the 8-player co-op mod v1.12)
+   (With another version of the 8-player mod it is different: everyone just needs the same.)
 6. Start Shogun 2 from Steam as usual and join or host a multiplayer campaign.
 
 If you had an older version of this mod installed, just run Install.bat again: it

@@ -3,7 +3,7 @@
 In a multiplayer campaign of Total War: SHOGUN 2, human players who are not at war with each other play their turns
 **at the same time** instead of waiting for each other. The AI clans still move one after another.
 
-Works on its own (the normal 2-player campaign) and together with the **8-player co-op mod v1.11** by Tasman Modding
+Works on its own (the normal 2-player campaign) and together with the **8-player co-op mod v1.12** by Tasman Modding
 (a separate download) for up to 8 players. On its own it also brings the 8-player mod's desync fixes (below); with
 the 8-player mod installed, that mod's own versions are used.
 
@@ -33,19 +33,23 @@ Together with the 8-player mod:
 - To **add** the 8-player mod later: uninstall this mod, install the 8-player mod, install this mod again.
 - **Reinstalling or uninstalling the 8-player mod** removes this mod as well. Run `Install.bat` again afterwards
   (after a reinstall).
-- This version knows the 8-player mod **v1.11** only. With the older v1.4 the installer asks you to update the 8-player
-  mod first; with any other version it refuses. Either way it changes nothing.
+- This version was checked with the 8-player mod **v1.12**. It also installs on any other version (older or newer),
+  with a warning: that combination is not officially supported and may misbehave. If the two mods would change the
+  same part of the game, it stops and changes nothing.
 
 Everyone must end up with the same hash, or they can't join each other. The installer prints it:
 
 | Installed on, turn mode | `empire.retail.dll` SHA-256 |
 |---|---|
 | the original game, hybrid | `213FE4799C5645DFFA1B29A36F492380D3428837239B59E43A8AB6CF52EAFBDF` |
-| the 8-player co-op mod v1.11, hybrid | `F2F15E267F42FC8C7BD9086C885FB907FA88B0991FB2648A068647D3BA83C9D8` |
+| the 8-player co-op mod v1.12, hybrid | `DAEC2B5707FA28C03452C6797231CE33146720C2F96832F374E05D0A65FCD560` |
 | the original game, simultaneous | `744F3CF598EC66215226804B12F1F69C4B89F35FD9950D4032FFE1538763EC6A` |
-| the 8-player co-op mod v1.11, simultaneous | `D71825943EEC7C27E23352EFE4E33E8DCB8C2EDFAEF5ACA4DF142C037A07C0C8` |
+| the 8-player co-op mod v1.12, simultaneous | `7E318C87D1C77FD68ADD05F7A5F954C10E2AFC47724FC4BD15A0C958AFF692D6` |
 
-So either everyone has the 8-player mod, or nobody does, and everyone picks the same turn mode:
+With another version of the 8-player mod the hash is different; it only has to be the same for everyone.
+
+So either everyone has the same 8-player mod version, or nobody has the 8-player mod, and everyone picks the same turn
+mode:
 - **hybrid** (default): players who are not at war with each other play at the same time; a player at war with
   another player plays alone, one after the other as in the normal game.
 - **simultaneous**: all players always play at the same time, even at war with each other (they can attack each
