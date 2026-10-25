@@ -3712,17 +3712,23 @@ public static class SharedTurnsPatcher {
 		// the offset to its parent) from the display's Position (vt+18h, the same frame). String s's component (+7s in
 		// HudSlotNames) holds member m = sigma(s) (HudGroupFlags: 0 and L swapped, L = HudVa+28h). Colour (normal_t0)
 		// while that member plays, grey (set_greyscale_t0) once its ended bit is set; the layout greys every slot but
-		// flag_3. Under each flag its player's name (HudFlagName) in the name line's text colour; the name line itself
-		// (the lead's "clan (player)") is emptied, not hidden: the countdown dy_timer is its child. The glow ring (68 px,
-		// a sibling drawn just before flag_3, at the layout's -2 / -2 from it) goes behind slot L, which is flag_3: this
-		// PC's own clan; hidden when that clan isn't shown. Changes every register but ebx and esi.
+		// flag_3. The grey params are the shader's grey blend and opacity (ps set_greyscale_pixel: lerp to luminance by
+		// v2.x, alpha times v2.y): {1, 0.4} as FUN_111ed360, but {1, 1} for slot L's flag_3, whose glow ring is a
+		// filled disc (colour_picker_circle.tga, 68 px, gold, an orange 75% one inside it) that shows only as a 2 px
+		// border around an opaque flag. Under each flag its player's name (HudFlagName) in the name line's text colour;
+		// the name line itself (the lead's "clan (player)") is emptied, not hidden: the countdown dy_timer is its child.
+		// The glow ring (a sibling drawn just before flag_3, at the layout's -2 / -2 from it) goes behind slot L, which
+		// is flag_3: this PC's own clan; hidden when that clan isn't shown. Changes every register but ebx and esi.
 		// Frame: +00 the name, +0Ch the technique (engine strings), +18h the position, +20h zero shader params, +30h n,
-		// +34h member 0's x offset, +38h the child, +3Ch the params used, +40h max(L, 0), +44h L, +48h the names' colour
+		// +34h member 0's x offset, +38h the child, +3Ch the params used, +40h max(L, 0), +44h L, +48h the names' colour,
+		// +4Ch the opaque grey params
 		uint at = a.Here;
-		a.Raw(0x83, 0xEC, 0x4C);                          // sub esp,4Ch
+		a.Raw(0x83, 0xEC, 0x5C);                          // sub esp,5Ch
 		a.Raw(0x33, 0xC0);                                // xor eax,eax
-		foreach (byte s in new byte[] { 0x20, 0x24, 0x28, 0x2C })
-			a.Raw(0x89, 0x44, 0x24, s);                   // mov [esp+s],eax         (zero params)
+		foreach (byte s in new byte[] { 0x20, 0x24, 0x28, 0x2C, 0x54, 0x58 })
+			a.Raw(0x89, 0x44, 0x24, s);                   // mov [esp+s],eax         (zero params, the opaque grey's last two)
+		a.Raw(0xC7, 0x44, 0x24, 0x4C, 0x00, 0x00, 0x80, 0x3F); // mov dword ptr [esp+4Ch],1.0f (all grey)
+		a.Raw(0xC7, 0x44, 0x24, 0x50, 0x00, 0x00, 0x80, 0x3F); // mov dword ptr [esp+50h],1.0f (opaque)
 		EmitGroupPtr(a, 0, HudVa);                        // eax = &hud
 		a.Raw(0x8B, 0x40, 0x28);                          // mov eax,[eax+28h]       (L)
 		a.Raw(0x89, 0x44, 0x24, 0x44);                    // mov [esp+44h],eax
@@ -3828,6 +3834,11 @@ public static class SharedTurnsPatcher {
 		a.J8(0x73, "shade");                              // jnc shade               (still plays)
 		EmitGroupPtr(a, 0, GreyTechnique);                // eax = "set_greyscale_t0"
 		EmitGroupPtr(a, 2, GreyParams);                   // edx = {1.0, 0.4, 0, 0}
+		a.Raw(0x85, 0xED);                                // test ebp,ebp
+		a.J8(0x75, "shade");                              // jnz shade               (not flag_3)
+		a.Raw(0x83, 0x7C, 0x24, 0x44, 0x00);              // cmp dword ptr [esp+44h],0
+		a.J8(0x7C, "shade");                              // jl shade                (no ring: this PC's clan isn't shown)
+		a.Raw(0x8D, 0x54, 0x24, 0x4C);                    // lea edx,[esp+4Ch]       ({1.0, 1.0, 0, 0}: the disc stays hidden)
 		a.Mark("shade");
 		a.Raw(0x89, 0x54, 0x24, 0x3C);                    // mov [esp+3Ch],edx
 		a.Raw(0x50);                                      // push eax
@@ -3900,7 +3911,7 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x6A, 0x00);                                // push 0                  (ecx = the ring)
 		a.Call(SetVisible);                               // the ring hidden
 		a.Mark("done");
-		a.Raw(0x83, 0xC4, 0x4C);                          // add esp,4Ch
+		a.Raw(0x83, 0xC4, 0x5C);                          // add esp,5Ch
 		a.Raw(0xC3);                                      // ret
 		a.Resolve();
 		return at;

@@ -42,10 +42,10 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on, turn mode | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game, hybrid | `7FE9D936A3B13C77A9DD9AB787DDD05C771AF34DC52079D2E866E5E716401AEB` |
-| the 8-player co-op mod v1.12, hybrid | `186133819DC49F0D4F27F971131C94CBEC573309E835BC981A25B3F623CBEA6D` |
-| the original game, simultaneous | `7CA2ACFC9E926054861B18E3D8BD314E7AEF46F1A9DA5F348542FD26F5FBD243` |
-| the 8-player co-op mod v1.12, simultaneous | `49123D5939B189D4C37576A5C378302DDE129BE546E4073963BC83CC13B3006F` |
+| the original game, hybrid | `7CF6D41DE95C22C62220DE0C3C824B344735BD02955FAC2D4504387D68D255D1` |
+| the 8-player co-op mod v1.12, hybrid | `7B3E6E4D2AA339096EC705A7BB6D572CAE5BAADB8657D0C4084530C1267BDBD9` |
+| the original game, simultaneous | `F08E9A1154EE2A6F9FAF258791D491C38ABF7837EAB1CFE859834D1CD9B90D10` |
+| the 8-player co-op mod v1.12, simultaneous | `3134BD92CBA1C49FF08B843D7FF3F90689F0A77A9D722544FEA6BDB822172345` |
 
 With another version of the 8-player mod the hash is different; it only has to be the same for everyone.
 
