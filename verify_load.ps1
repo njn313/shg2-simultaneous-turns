@@ -117,7 +117,7 @@ if ((Hex $endTurn) -ne '8B 81 B0 00 00 00 90 90 90 90 90 90') { $ok = $false }
 # the mod's data from DataFloor 11CB1C00 (group state, log flags, pathfinder state, the save's group, the attack
 # table, the top display's state; above the 8-player mod's, which ends at 11CB1910 in v1.11 / v1.12): mapped, inside
 # .data, zero
-$floor = 0x11CB1C00; $need = 0x28C
+$floor = 0x11CB1C00; $need = 0x290
 $dataEnd = [int64]$secs['.data'].Va + $secs['.data'].Size
 $data = Mem $floor $need
 $nonzero = @($data | Where-Object { $_ -ne 0 }).Count

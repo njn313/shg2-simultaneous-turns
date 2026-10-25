@@ -3287,14 +3287,16 @@ public static class SharedTurnsPatcher {
 	// only builder is FUN_11128d60(ui; f), from the transition's listener (campaign+A0h, which runs before GroupStart),
 	// the campaign UI's constructor and the pending-battle listener; the lead's own PC never gets it. During a shared
 	// turn every PC shows the clans of the group instead (at most five: the layout's slots), left to right in turn
-	// order, evenly spaced, in colour while a clan plays and grey once it has ended its part. Nothing here feeds the
-	// simulation, so PCs may differ (as vanilla's display does). The state in .data, after the attack table:
+	// order, evenly spaced, in colour while a clan plays and grey once it has ended its part, the PC's own clan with the
+	// glow ring. Nothing here feeds the simulation, so PCs differ (as vanilla's display does). The state in .data,
+	// after the attack table:
 	const uint HudVa = AttackTableVa + AttackDwords * 4;   // +00 the campaign UI our display was built for (0 = none)
 	                                           // +04 shown[5]: members[0..4] when it was built, 0 past count
 	                                           // +18 generation: +1 per display built
 	                                           // +1C, +20, +24: the display component, ended bits and generation the
 	                                           //     row and its colours were last set for
-	const uint HudLastDword = HudVa + 0x24;
+	                                           // +28 the local clan's slot among the shown (-1: not shown)
+	const uint HudLastDword = HudVa + 0x28;
 	const uint CampaignUiGlobal = 0x11BC8FE0;  // the campaign UI (set at 1110ADA9 in its constructor FUN_111092e0), the HUD's ui
 	const uint UiRootGlobal = 0x11BBE364;      // [+18h]: the UI root's Lua handle object (FUN_1127a130)
 	const uint FlagsBuild = 0x11128D60;        // thiscall(ui; f) ret 4: the vanilla display for f's turn (never f = local)
@@ -3315,8 +3317,8 @@ public static class SharedTurnsPatcher {
 	const uint NormalTechnique = 0x116F3664;   // "normal_t0"
 	const uint GreyParams = 0x11725070;        // {1.0f, 0.4f, 0, 0}: the greyed look FUN_111ed360 gives with it
 	const uint GlowName = 0x116F0BE0;          // "glow"
-	// the component names of the slots, 7 bytes each: slot 0 (the lead, flag_path) and the members' in the order
-	// HudGroupFlags fills them (prev_flag_1, next_flag_1, prev_flag_2, next_flag_2)
+	// the components of HudGroupFlags' strings s = 0..4, 7 bytes each: flag_path (flag_3), prev_flag_1, next_flag_1,
+	// prev_flag_2, next_flag_2
 	const string HudSlotNames = "flag_3\0flag_2\0flag_4\0flag_1\0flag_5\0";
 
 	// The HUD hooks' data (the slot names) goes after all other code, like Log's; HudPtr's "add reg, item - popAt"
@@ -3343,43 +3345,76 @@ public static class SharedTurnsPatcher {
 	static uint EmitHudGroupFlags(Asm a, uint log) {
 		// stdcall(ui) ret 4, keeps every register: shows the running group (count >= 2) on the top display through the
 		// game's own FUN_11126f60 (Lua CreateEndTurnFlagsDisplay, which first closes the old one), with the strings made
-		// as FUN_11128d60 makes them (11128E29..11128E79): members[0] (the lead) as flag_path (flag_3, which the script
-		// always fills), members[1..4] as prev_flag_1, next_flag_1, prev_flag_2, next_flag_2 (flag_2, flag_4, flag_1,
-		// flag_5); "" hides a slot. HudFlagsRow puts them in a row afterwards. The name line is the lead's (in MP
+		// as FUN_11128d60 makes them (11128E29..11128E79). String s = flag_path (flag_3, which the script always fills),
+		// prev_flag_1, next_flag_1, prev_flag_2, next_flag_2 (flag_2, flag_4, flag_1, flag_5) gets members[sigma(s)],
+		// sigma swapping 0 and L, the local clan's slot among the shown (0 when it isn't shown): so flag_3, the one
+		// component the glow ring sits behind (a sibling drawn just before it), carries this PC's own clan. "" hides a
+		// slot. HudFlagsRow puts them in a row in member order afterwards. The name line is the lead's (in MP
 		// FUN_11126f60 writes "clan (player)" itself). The local clan is shown too (vanilla's list leaves it out), so
 		// every PC shows the same clans. Records what it showed in HudVa. Nothing for a dead lead (as vanilla).
 		// Frame: +00 name, +0Ch flag_path, +18h prev_flag_1, +24h prev_flag_2, +30h next_flag_1, +3Ch next_flag_2 (engine
-		// strings), +48h the wide flag folder; ui at [esp+78h]
+		// strings), +48h the wide flag folder, +54h max(L, 0), +58h L
 		int[] slotStr = { 0x0C, 0x18, 0x30, 0x24, 0x3C };
 		uint at = a.Here;
 		a.Raw(0x60);                                      // pushad
-		a.Raw(0x83, 0xEC, 0x54);                          // sub esp,54h
-		a.Raw(0x8B, 0x6C, 0x24, 0x78);                    // mov ebp,[esp+78h]       (ui)
+		a.Raw(0x8B, 0x6C, 0x24, 0x24);                    // mov ebp,[esp+24h]       (ui)
+		a.Raw(0x83, 0xEC, 0x5C);                          // sub esp,5Ch
 		EmitGroupPtr(a, 6, GroupVa);                      // esi = &group
 		a.Raw(0x8B, 0x7E, 0x34);                          // mov edi,[esi+34h]       (lead)
 		a.Raw(0x8B, 0xCF);                                // mov ecx,edi
 		a.Call(FactionIsDead);
 		a.Raw(0x84, 0xC0);                                // test al,al
 		a.J32("out", 0x0F, 0x85);                         // jnz out
-		for (int k = 0; k < 5; k++) {
-			a.Raw(0x83, 0x3E, (byte)k);                   // cmp dword ptr [esi],k   (count)
-			a.Raw(0x8D, 0x4C, 0x24, (byte)slotStr[k]);    // lea ecx,[esp+slot k's string]
-			a.J8(0x76, "empty" + k);                      // jbe empty               (no member k)
-			a.Raw(0xFF, 0x76, (byte)(0x34 + 4 * k));      // push dword ptr [esi+34h+4k] (members[k])
+		a.Raw(0x8B, 0x85, 0x98, 0x0A, 0x00, 0x00);        // mov eax,[ebp+0A98h]     (model)
+		a.Raw(0x8B, 0x90, 0xB0, 0x00, 0x00, 0x00);        // mov edx,[eax+0B0h]      (local)
+		a.Raw(0x8B, 0x0E);                                // mov ecx,[esi]           (count)
+		a.Raw(0x83, 0xF9, 0x05);                          // cmp ecx,5
+		a.J8(0x76, "n");                                  // jbe n
+		a.Raw(0xB9, 0x05, 0x00, 0x00, 0x00);              // mov ecx,5               (shown)
+		a.Mark("n");
+		a.Raw(0x33, 0xC0);                                // xor eax,eax             (k)
+		a.Mark("find");
+		a.Raw(0x39, 0x54, 0x86, 0x34);                    // cmp [esi+eax*4+34h],edx (members[k] == local?)
+		a.J8(0x74, "found");                              // je found
+		a.Raw(0x40);                                      // inc eax
+		a.Raw(0x3B, 0xC1);                                // cmp eax,ecx
+		a.J8(0x72, "find");                               // jb find
+		a.Raw(0x83, 0xC8, 0xFF);                          // or eax,-1               (not shown)
+		a.Mark("found");
+		a.Raw(0x89, 0x44, 0x24, 0x58);                    // mov [esp+58h],eax       (L)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x79, "swap");                               // jns swap
+		a.Raw(0x33, 0xC0);                                // xor eax,eax
+		a.Mark("swap");
+		a.Raw(0x89, 0x44, 0x24, 0x54);                    // mov [esp+54h],eax       (max(L, 0))
+		for (int s = 0; s < 5; s++) {
+			if (s == 0)
+				a.Raw(0x8B, 0x44, 0x24, 0x54);            // mov eax,[esp+54h]       (sigma(0) = max(L, 0))
+			else {
+				a.Raw(0xB8, (byte)s, 0x00, 0x00, 0x00);   // mov eax,s
+				a.Raw(0x83, 0x7C, 0x24, 0x54, (byte)s);   // cmp dword ptr [esp+54h],s
+				a.J8(0x75, "member" + s);                 // jne member              (sigma(s) = s)
+				a.Raw(0x33, 0xC0);                        // xor eax,eax             (sigma(L) = 0: the lead)
+				a.Mark("member" + s);
+			}
+			a.Raw(0x8D, 0x4C, 0x24, (byte)slotStr[s]);    // lea ecx,[esp+string s]
+			a.Raw(0x3B, 0x06);                            // cmp eax,[esi]           (count)
+			a.J8(0x73, "empty" + s);                      // jae empty               (no such member)
+			a.Raw(0xFF, 0x74, 0x86, 0x34);                // push dword ptr [esi+eax*4+34h] (members[sigma(s)])
 			a.Raw(0x8D, 0x44, 0x24, 0x4C);                // lea eax,[esp+4Ch]       (&wide)
 			a.Raw(0x50);                                  // push eax
 			a.Raw(0x8B, 0xCD);                            // mov ecx,ebp             (ui)
 			a.Call(FactionFlagPath);                      // eax = &wide
-			a.Raw(0x8D, 0x4C, 0x24, (byte)slotStr[k]);    // lea ecx,[esp+slot k's string]
+			a.Raw(0x8D, 0x4C, 0x24, (byte)slotStr[s]);    // lea ecx,[esp+string s]
 			a.Raw(0x51);                                  // push ecx
 			a.Raw(0x8B, 0xC8);                            // mov ecx,eax
 			a.Call(WideToStr);
 			a.Raw(0x8D, 0x4C, 0x24, 0x48);                // lea ecx,[esp+48h]
 			a.Call(WideFree);
-			a.J8(0xEB, "next" + k);                       // jmp next
-			a.Mark("empty" + k);
-			a.Call(StrEmpty);                             // (ecx = &the slot's string)
-			a.Mark("next" + k);
+			a.J8(0xEB, "next" + s);                       // jmp next
+			a.Mark("empty" + s);
+			a.Call(StrEmpty);                             // (ecx = &string s)
+			a.Mark("next" + s);
 		}
 		a.Raw(0x6A, 0x00);                                // push 0
 		a.Raw(0x8B, 0xCF);                                // mov ecx,edi             (lead)
@@ -3437,12 +3472,14 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x41);                                      // inc ecx
 		a.Raw(0x83, 0xF9, 0x05);                          // cmp ecx,5
 		a.J8(0x72, "shown");                              // jb shown
+		a.Raw(0x8B, 0x54, 0x24, 0x58);                    // mov edx,[esp+58h]
+		a.Raw(0x89, 0x50, 0x28);                          // mov [eax+28h],edx       (L)
 		a.Raw(0xFF, 0x40, 0x18);                          // inc dword ptr [eax+18h] (generation)
 		a.Raw(0xFF, 0x36);                                // push dword ptr [esi]    (a2: count)
 		a.Raw(0x57);                                      // push edi                (a1: lead)
 		CallLog(a, log, LogHud);
 		a.Mark("out");
-		a.Raw(0x83, 0xC4, 0x54);                          // add esp,54h
+		a.Raw(0x83, 0xC4, 0x5C);                          // add esp,5Ch
 		a.Raw(0x61);                                      // popad
 		a.Raw(0xC2, 0x04, 0x00);                          // ret 4
 		a.Resolve();
@@ -3546,20 +3583,30 @@ public static class SharedTurnsPatcher {
 	}
 
 	static uint EmitHudFlagsRow(Asm a) {
-		// ebx = our display's component, esi = &group: the shown slots in one row in turn order, left to right and
-		// centred like the layout's five (its 392 px wide component, 64 px flags, the middle one at x 164): slot k at
-		// x 200 - 36n + 72k, y 2 (n = shown slots), through the component's MoveTo (vt+14h, &{float x, y} on screen;
-		// it keeps the offset to its parent) from the display's Position (vt+18h, the same frame). Colour (normal_t0)
+		// ebx = our display's component, esi = &group: the shown members in one row in turn order, left to right and
+		// centred like the layout's five (its 392 px wide component, 64 px flags, the middle one at x 164): member m at
+		// x 200 - 36n + 72m, y 2 (n = shown), through the component's MoveTo (vt+14h, &{float x, y} on screen; it keeps
+		// the offset to its parent) from the display's Position (vt+18h, the same frame). String s's component (+7s in
+		// HudSlotNames) holds member m = sigma(s) (HudGroupFlags: 0 and L swapped, L = HudVa+28h). Colour (normal_t0)
 		// while that member plays, grey (set_greyscale_t0) once its ended bit is set; the layout greys every slot but
-		// flag_3. The glow ring (behind flag_3, a sibling) is hidden: in a shared turn no clan is "the one playing".
-		// Changes every register but ebx and esi.
+		// flag_3. The glow ring (68 px, a sibling drawn just before flag_3, at the layout's -2 / -2 from it) goes behind
+		// slot L, which is flag_3: this PC's own clan; hidden when that clan isn't shown. Changes every register but
+		// ebx and esi.
 		// Frame: +00 the name, +0Ch the technique (engine strings), +18h the position, +20h zero shader params, +30h n,
-		// +34h slot k's x offset, +38h the child, +3Ch the params used
+		// +34h member 0's x offset, +38h the child, +3Ch the params used, +40h max(L, 0), +44h L
 		uint at = a.Here;
-		a.Raw(0x83, 0xEC, 0x40);                          // sub esp,40h
+		a.Raw(0x83, 0xEC, 0x48);                          // sub esp,48h
 		a.Raw(0x33, 0xC0);                                // xor eax,eax
 		foreach (byte s in new byte[] { 0x20, 0x24, 0x28, 0x2C })
 			a.Raw(0x89, 0x44, 0x24, s);                   // mov [esp+s],eax         (zero params)
+		EmitGroupPtr(a, 0, HudVa);                        // eax = &hud
+		a.Raw(0x8B, 0x40, 0x28);                          // mov eax,[eax+28h]       (L)
+		a.Raw(0x89, 0x44, 0x24, 0x44);                    // mov [esp+44h],eax
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x79, "swap");                               // jns swap
+		a.Raw(0x33, 0xC0);                                // xor eax,eax
+		a.Mark("swap");
+		a.Raw(0x89, 0x44, 0x24, 0x40);                    // mov [esp+40h],eax       (max(L, 0))
 		a.Raw(0x8B, 0x06);                                // mov eax,[esi]           (count)
 		a.Raw(0x83, 0xF8, 0x05);                          // cmp eax,5
 		a.J8(0x76, "n");                                  // jbe n
@@ -3569,12 +3616,21 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x6B, 0xC0, 0x24);                          // imul eax,eax,36
 		a.Raw(0xB9, 0xC8, 0x00, 0x00, 0x00);              // mov ecx,200
 		a.Raw(0x2B, 0xC8);                                // sub ecx,eax
-		a.Raw(0x89, 0x4C, 0x24, 0x34);                    // mov [esp+34h],ecx       (slot 0's x)
-		a.Raw(0x33, 0xED);                                // xor ebp,ebp             (k)
+		a.Raw(0x89, 0x4C, 0x24, 0x34);                    // mov [esp+34h],ecx       (member 0's x)
+		a.Raw(0x33, 0xED);                                // xor ebp,ebp             (s)
 		a.Mark("slot");
-		HudPtr(a, 0, HudSlotNames);                       // eax = the slot names
+		a.Raw(0x8B, 0xFD);                                // mov edi,ebp             (m = sigma(s))
+		a.Raw(0x3B, 0x6C, 0x24, 0x40);                    // cmp ebp,[esp+40h]
+		a.J8(0x75, "notL");                               // jne notL
+		a.Raw(0x33, 0xFF);                                // xor edi,edi             (sigma(L) = 0)
+		a.Mark("notL");
+		a.Raw(0x85, 0xED);                                // test ebp,ebp
+		a.J8(0x75, "m");                                  // jnz m
+		a.Raw(0x8B, 0x7C, 0x24, 0x40);                    // mov edi,[esp+40h]       (sigma(0) = max(L, 0))
+		a.Mark("m");
+		HudPtr(a, 0, HudSlotNames);                       // eax = the component names
 		a.Raw(0x8D, 0x04, 0xE8);                          // lea eax,[eax+ebp*8]
-		a.Raw(0x2B, 0xC5);                                // sub eax,ebp             (slot k's name: +7k)
+		a.Raw(0x2B, 0xC5);                                // sub eax,ebp             (string s's: +7s)
 		a.Raw(0x50);                                      // push eax
 		a.Raw(0x8D, 0x4C, 0x24, 0x04);                    // lea ecx,[esp+4]         (the name)
 		a.Call(StrFromC);
@@ -3582,7 +3638,7 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x50);                                      // push eax
 		a.Raw(0x8B, 0xCB);                                // mov ecx,ebx             (the display)
 		a.Call(FindChild);
-		a.Raw(0x89, 0x44, 0x24, 0x38);                    // mov [esp+38h],eax       (the slot's flag)
+		a.Raw(0x89, 0x44, 0x24, 0x38);                    // mov [esp+38h],eax       (the flag)
 		a.Raw(0x8D, 0x0C, 0x24);                          // lea ecx,[esp]
 		a.Call(StrFree);
 		a.Raw(0x8B, 0x4C, 0x24, 0x38);                    // mov ecx,[esp+38h]
@@ -3593,7 +3649,9 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x8B, 0xCB);                                // mov ecx,ebx
 		a.Raw(0x8B, 0x01);                                // mov eax,[ecx]
 		a.Raw(0xFF, 0x50, 0x18);                          // call dword ptr [eax+18h] (the display's Position)
-		a.Raw(0xF3, 0x0F, 0x2A, 0x44, 0x24, 0x34);        // cvtsi2ss xmm0,dword ptr [esp+34h]
+		a.Raw(0x6B, 0xC7, 0x48);                          // imul eax,edi,72
+		a.Raw(0x03, 0x44, 0x24, 0x34);                    // add eax,[esp+34h]       (member m's x offset)
+		a.Raw(0xF3, 0x0F, 0x2A, 0xC0);                    // cvtsi2ss xmm0,eax
 		a.Raw(0xF3, 0x0F, 0x58, 0x44, 0x24, 0x18);        // addss xmm0,dword ptr [esp+18h]
 		a.Raw(0xF3, 0x0F, 0x11, 0x44, 0x24, 0x18);        // movss dword ptr [esp+18h],xmm0 (x)
 		a.Raw(0xB8, 0x02, 0x00, 0x00, 0x00);              // mov eax,2
@@ -3608,7 +3666,7 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x8D, 0x54, 0x24, 0x20);                    // lea edx,[esp+20h]       (zero params)
 		EmitGroupPtr(a, 0, NormalTechnique);              // eax = "normal_t0"
 		a.Raw(0x8B, 0x4E, 0x04);                          // mov ecx,[esi+4]         (ended)
-		a.Raw(0x0F, 0xA3, 0xE9);                          // bt ecx,ebp
+		a.Raw(0x0F, 0xA3, 0xF9);                          // bt ecx,edi
 		a.J8(0x73, "shade");                              // jnc shade               (still plays)
 		EmitGroupPtr(a, 0, GreyTechnique);                // eax = "set_greyscale_t0"
 		EmitGroupPtr(a, 2, GreyParams);                   // edx = {1.0, 0.4, 0, 0}
@@ -3627,10 +3685,11 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x8D, 0x4C, 0x24, 0x0C);                    // lea ecx,[esp+0Ch]
 		a.Call(StrFree);
 		a.Mark("next");
-		a.Raw(0x83, 0x44, 0x24, 0x34, 0x48);              // add dword ptr [esp+34h],72
 		a.Raw(0x45);                                      // inc ebp
 		a.Raw(0x3B, 0x6C, 0x24, 0x30);                    // cmp ebp,[esp+30h]
 		a.J32("slot", 0x0F, 0x82);                        // jb slot
+		// the glow ring: the layout has two components of that name, the ring (the display's child) and one inside it;
+		// the name lookup may give either, so go up to the display's child
 		EmitGroupPtr(a, 0, GlowName);                     // eax = "glow"
 		a.Raw(0x50);                                      // push eax
 		a.Raw(0x8D, 0x4C, 0x24, 0x04);                    // lea ecx,[esp+4]
@@ -3643,12 +3702,43 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x8D, 0x0C, 0x24);                          // lea ecx,[esp]
 		a.Call(StrFree);
 		a.Raw(0x8B, 0x4C, 0x24, 0x38);                    // mov ecx,[esp+38h]
+		a.Mark("up");
 		a.Raw(0x85, 0xC9);                                // test ecx,ecx
 		a.J8(0x74, "done");                               // jz done
-		a.Raw(0x6A, 0x00);                                // push 0
-		a.Call(SetVisible);                               // the glow hidden
+		a.Raw(0x8B, 0x81, 0x94, 0x00, 0x00, 0x00);        // mov eax,[ecx+94h]       (its parent)
+		a.Raw(0x3B, 0xC3);                                // cmp eax,ebx
+		a.J8(0x74, "ring");                               // je ring
+		a.Raw(0x8B, 0xC8);                                // mov ecx,eax
+		a.J8(0xEB, "up");                                 // jmp up
+		a.Mark("ring");
+		a.Raw(0x89, 0x4C, 0x24, 0x38);                    // mov [esp+38h],ecx       (the ring)
+		a.Raw(0x83, 0x7C, 0x24, 0x44, 0x00);              // cmp dword ptr [esp+44h],0
+		a.J8(0x7C, "hide");                               // jl hide                 (this PC's clan isn't shown)
+		a.Raw(0x8D, 0x44, 0x24, 0x18);                    // lea eax,[esp+18h]
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0x8B, 0xCB);                                // mov ecx,ebx
+		a.Raw(0x8B, 0x01);                                // mov eax,[ecx]
+		a.Raw(0xFF, 0x50, 0x18);                          // call dword ptr [eax+18h] (the display's Position)
+		a.Raw(0x6B, 0x44, 0x24, 0x44, 0x48);              // imul eax,dword ptr [esp+44h],72
+		a.Raw(0x03, 0x44, 0x24, 0x34);                    // add eax,[esp+34h]       (member L's x offset)
+		a.Raw(0x83, 0xC0, 0xFE);                          // add eax,-2              (the ring's own)
+		a.Raw(0xF3, 0x0F, 0x2A, 0xC0);                    // cvtsi2ss xmm0,eax
+		a.Raw(0xF3, 0x0F, 0x58, 0x44, 0x24, 0x18);        // addss xmm0,dword ptr [esp+18h]
+		a.Raw(0xF3, 0x0F, 0x11, 0x44, 0x24, 0x18);        // movss dword ptr [esp+18h],xmm0 (x; y as the display's, layout y 0)
+		a.Raw(0x8B, 0x4C, 0x24, 0x38);                    // mov ecx,[esp+38h]       (the ring)
+		a.Raw(0x8D, 0x44, 0x24, 0x18);                    // lea eax,[esp+18h]
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0x8B, 0x01);                                // mov eax,[ecx]
+		a.Raw(0xFF, 0x50, 0x14);                          // call dword ptr [eax+14h] (its MoveTo)
+		a.Raw(0x8B, 0x4C, 0x24, 0x38);                    // mov ecx,[esp+38h]
+		a.Raw(0x6A, 0x01);                                // push 1
+		a.Call(SetVisible);                               // the ring shown
+		a.J8(0xEB, "done");                               // jmp done
+		a.Mark("hide");
+		a.Raw(0x6A, 0x00);                                // push 0                  (ecx = the ring)
+		a.Call(SetVisible);                               // the ring hidden
 		a.Mark("done");
-		a.Raw(0x83, 0xC4, 0x40);                          // add esp,40h
+		a.Raw(0x83, 0xC4, 0x48);                          // add esp,48h
 		a.Raw(0xC3);                                      // ret
 		a.Resolve();
 		return at;
