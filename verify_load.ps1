@@ -79,7 +79,9 @@ $hooks = @(
 	@(0x1104EBC0, 'message log'),
 	@(0x11122988, 'ui turn gate'), @(0x11142F57, 'save message'), @(0x1122FF86, 'clan button'), @(0x112457A9, 'unit panel 1'),
 	@(0x1124ED39, 'unit panel 2'), @(0x1125458A, 'unit panel 3'), @(0x11254772, 'unit panel 4'), @(0x11143D98, 'demand surrender 1'),
-	@(0x111798B2, 'demand surrender 2'), @(0x11152230, 'ui negotiation'), @(0x111D7230, 'open negotiations'))
+	@(0x111798B2, 'demand surrender 2'), @(0x11152230, 'ui negotiation'), @(0x111D7230, 'open negotiations'),
+	@(0x1110C516, 'hud flags 1'), @(0x11155F27, 'hud flags 2'), @(0x11156B0C, 'hud flags 3'), @(0x11155EFE, 'hud close'),
+	@(0x1110ADBD, 'hud new ui'), @(0x111DA3B6, 'hud poll'), @(0x11076A70, 'hud shade'))
 # the desync fixes: this mod's on the original, the 8-player mod's own (in .s2mp) on top of it
 $desync = @(
 	@(0x100B190C, 'frame fp pin'), @(0x10227D40, 'tick fp pin'), @(0x10EE9A71, 'battle no-kick'), @(0x10EF9A87, 'report no-kick'),
@@ -113,8 +115,9 @@ $endTurn = Mem 0x1111E8BF 12
 "end turn faction   : {0}" -f (Hex $endTurn)
 if ((Hex $endTurn) -ne '8B 81 B0 00 00 00 90 90 90 90 90 90') { $ok = $false }
 # the mod's data from DataFloor 11CB1C00 (group state, log flags, pathfinder state, the save's group, the attack
-# table; above the 8-player mod's, which ends at 11CB1910 in v1.11 / v1.12): mapped, inside .data, zero
-$floor = 0x11CB1C00; $need = 0x264
+# table, the top display's state; above the 8-player mod's, which ends at 11CB1910 in v1.11 / v1.12): mapped, inside
+# .data, zero
+$floor = 0x11CB1C00; $need = 0x290
 $dataEnd = [int64]$secs['.data'].Va + $secs['.data'].Size
 $data = Mem $floor $need
 $nonzero = @($data | Where-Object { $_ -ne 0 }).Count

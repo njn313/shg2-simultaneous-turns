@@ -13,11 +13,12 @@ Check discord for more information: https://discord.gg/djhTAyMFeU
 | | |
 |---|---|
 | **Shared turns (experimental)** | Human players who are not at war with each other play their turns **at the same time**. Pressing End Turn only ends your own part: the AI clans move once the last of you has ended (or the turn timer runs out). A human at war with another human still plays alone (**hybrid** turn mode, the default); in the **simultaneous** turn mode every human always plays at the same time, even at war (chosen when installing, see below). Every player of the group can move, attack, build, recruit units and agents, use diplomacy, the clan button and disband units until they end their turn. One negotiation at a time: while one player negotiates (or answers an attack popup), the others' diplomacy waits; a diplomacy screen opened before that shows the clan but its offers do nothing, so close it and try again a moment later. Each player's armies find their way with their own clan's view of the map (fog of war, wars, right of passage), and moves longer than one turn (and new units walking to their general) carry on when the shared turn ends, for every player. Any player of the group can declare war on an AI clan from the attack popup (it opens their diplomacy screen). When the AI attacks a player's army, that player gets the pre-battle choice as usual. When a player of the group fights a battle, everyone waits for it as in the normal game (nobody moves meanwhile); afterwards an army whose move ran into the battle carries on, for every player. A save made during a shared turn keeps it: after loading it (or after a resync) whoever had ended stays ended, and nobody plays twice in the same round. If a player leaves during a shared turn, or their clan goes to the AI because a save is resumed without them (8-player mod), that clan counts as having ended: the others carry on, and the AI plays it from its next turn. |
+| **Who is still playing** | During a shared turn the display at the top of the campaign map shows the flags of the clans playing it, on every player's PC (the first player's too), in a row in turn order with the first player on the left: in colour while that player still plays, grey once they have ended their part (or left the game). Your own clan's flag has a glow ring around it. Under each flag is that player's name in small letters (a long name ends in "..."). It shows at most five flags: with six or more players in one shared turn (8-player mod) the first five are shown. During the AI clans' turns it looks as in the normal game. |
 | **Desync: save screen bug** | Opening the Save or Load screen switched that PC's maths and text rules to its Windows language for the rest of the session (e.g. decimal comma on German, Czech, French or Russian Windows), so it no longer matched the other players. Fixed: those screens now only change how dates are shown. |
 | **Desync: floating-point drift** | The game never locked the CPU's floating-point settings, so anything that changed them on one PC (overlays, anti-virus, drivers, alt-tabbing) made that PC calculate slightly differently. Fixed: the settings are reset to the game's defaults every frame and every battle tick. |
 | **Desync recovery** | If a campaign still goes out of sync, the resync starts by itself instead of waiting for someone to press OK (Cancel used to drop the player). |
 | **Battle desync: no more kick** | A battle can't be resynced, so the game used to drop the out-of-sync player. Now the battle carries on for everyone. The out-of-sync player's view may drift (a unit alive on their screen that is dead for others). Back on the campaign map, the host's state is copied to everyone by the campaign resync. |
-| **Diagnostics log** | The game writes `shared_turns.log` into the game folder: one line whenever a shared turn starts or ends, someone presses End Turn, the turn passes on, a player orders an army to move or attack (and whether the game accepted it), a popup or diplomacy screen waits for a player's answer and is answered, a negotiation starts, war is declared, the game checks whether an army may enter foreign land, an event message reaches the screen (which part of the game sent it and whether it may show), and for battles: who attacks whom, who gets the pre-battle choice, who answered it, and each step until the battle is over, and desyncs and resyncs (without the 8-player mod). Clicks on the map are logged only on the PC that clicked; event-message lines can differ between PCs too. Each game start keeps the previous one as `shared_turns.log.old`. It only records what happens; it changes nothing in the game. Send it along with any problem report. |
+| **Diagnostics log** | The game writes `shared_turns.log` into the game folder: one line whenever a shared turn starts or ends, someone presses End Turn, the turn passes on, a player orders an army to move or attack (and whether the game accepted it), a popup or diplomacy screen waits for a player's answer and is answered, a negotiation starts, war is declared, the game checks whether an army may enter foreign land, an event message reaches the screen (which part of the game sent it and whether it may show), the display at the top of the screen is set up for a shared turn, and for battles: who attacks whom, who gets the pre-battle choice, who answered it, and each step until the battle is over, and desyncs and resyncs (without the 8-player mod). Clicks on the map and the top display are logged only on the PC where they happen; event-message lines can differ between PCs too. Each game start keeps the previous one as `shared_turns.log.old`. It only records what happens; it changes nothing in the game. Send it along with any problem report. |
 
 ## Install / uninstall
 1. Everyone closes Shogun 2.
@@ -41,10 +42,10 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on, turn mode | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game, hybrid | `213FE4799C5645DFFA1B29A36F492380D3428837239B59E43A8AB6CF52EAFBDF` |
-| the 8-player co-op mod v1.12, hybrid | `DAEC2B5707FA28C03452C6797231CE33146720C2F96832F374E05D0A65FCD560` |
-| the original game, simultaneous | `744F3CF598EC66215226804B12F1F69C4B89F35FD9950D4032FFE1538763EC6A` |
-| the 8-player co-op mod v1.12, simultaneous | `7E318C87D1C77FD68ADD05F7A5F954C10E2AFC47724FC4BD15A0C958AFF692D6` |
+| the original game, hybrid | `45575970A4906CBEF3CD5492ACC40B566799CF69FF4854CF5F7E72FF0EDC4354` |
+| the 8-player co-op mod v1.12, hybrid | `8E016FE5C838A1131882F8D5090C706E0E5D4707254F0B979D71C39BCB2C56C4` |
+| the original game, simultaneous | `8801A72D830235A8CE377AB281D126F032F5BB885C612C0D6A2FBBDB80CE001C` |
+| the 8-player co-op mod v1.12, simultaneous | `7BE950D46280902EEBCFDB24765DEDCF9527411F0A8A0B95CF3CFDD43F4CAEDF` |
 
 With another version of the 8-player mod the hash is different; it only has to be the same for everyone.
 
@@ -83,6 +84,8 @@ The tests for the current build, and what to send back when one fails, are in **
 - After loading a save made during a shared turn with build 0.17 or older, whoever had already ended must press End
   Turn again.
 - Only the first player can skip army movement with the Space bar.
+- The display at the top of the screen has room for five clans: with six or more players in one shared turn, the
+  others aren't shown there.
 
 ## Files
 | Path | What |
