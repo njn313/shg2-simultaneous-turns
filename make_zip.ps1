@@ -1,7 +1,7 @@
 # Packs the player files into Shogun2-SharedTurns_<first 8 of the DLL hash>.zip in the repo folder, for sharing a
 # test build. No game files: players build the mod from their own game with Install.bat.
 # Needs re\game\empire.retail.dll (the pristine copy) and, for the 8-player hash, re\build\p8\empire.retail.dll (the
-# 8-player mod v1.11 built from it). Fails if README.md or "HOW TO INSTALL.txt" don't quote the build's
+# 8-player mod v1.12 built from it). Fails if README.md or "HOW TO INSTALL.txt" don't quote the build's
 # hashes (update them first). Staging goes to re\build\zipstage.
 #   powershell -ExecutionPolicy Bypass -File make_zip.ps1      (or double-click make_zip.bat)
 $ErrorActionPreference = 'Stop'
@@ -24,8 +24,8 @@ foreach ($mode in @('hybrid', 'simultaneous')) {
 		Remove-Item $dll
 	}
 }
-"DLL sha256, hybrid: $($hashes[0]) (original), $($hashes[1]) (8-player mod v1.11)"
-"DLL sha256, simultaneous: $($hashes[2]) (original), $($hashes[3]) (8-player mod v1.11)"
+"DLL sha256, hybrid: $($hashes[0]) (original), $($hashes[1]) (8-player mod v1.12)"
+"DLL sha256, simultaneous: $($hashes[2]) (original), $($hashes[3]) (8-player mod v1.12)"
 foreach ($h in $hashes) {
 	if (-not (Select-String -Path (Join-Path $repo 'README.md') -SimpleMatch $h -Quiet)) { throw "README.md doesn't list $($h): update its hash table first." }
 	if (-not (Select-String -Path (Join-Path $repo 'HOW TO INSTALL.txt') -SimpleMatch $h.Substring(0, 8) -Quiet)) { throw "HOW TO INSTALL.txt doesn't name $($h.Substring(0, 8)): update the hash lines first." }
