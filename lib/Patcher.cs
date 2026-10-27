@@ -5,7 +5,7 @@
 // Inputs it accepts (anything else is refused):
 //  - the original empire.retail.dll of the current Steam build (OriginalSha256);
 //  - the 8-player co-op mod (Tasman Modding) built from that original, so both mods can be installed together: the
-//    8-player mod first, this one on top. v1.12 (EightPlayerV112Sha256) is the version this build was checked with;
+//    8-player mod first, this one on top. v1.13 (EightPlayerV113Sha256) is the version this build was checked with;
 //    any other one (its section .s2mp) is built on too, the installer warns. Build still refuses one that changes
 //    a byte this mod patches (ExpectBytes), has data past DataFloor, or jumps back into one of our patches.
 // All new code goes into a section of its own (".s2st", appended after the last section; the header has room for
@@ -20,19 +20,20 @@ using System.Text;
 public static class SharedTurnsPatcher {
 	public const string OriginalSha256 = "022FAE2E2DA92B59B8B1B8EE52887003C624E3C8ECA060B209F5D792A7F874F5";
 	// the 8-player mod version this build was checked with (compat.py, verify_load.ps1): the only officially supported one
-	public const string EightPlayerV112Sha256 = "E6722B2088594A31938C50B41848ED1241BBC60C5B0F020D30D7B7B5B0F0E650";
+	public const string EightPlayerV113Sha256 = "E2AFE95706AAE39B005A23A1046FBC8C1FEB09967883BE6892192BF1F92E2EBE";
 	// 8-player mod builds of the original known by name (sha256, version); every version adds its code as .s2mp
 	static readonly string[,] EightPlayerKnown = {
 		{ "AE3A3F4E25DF8EFC9C0A4BC439AF287507558D65A3191B6F508FDD47ACF56424", "1.4" },
 		{ "971C7A955B045433F54161126A6866B3F37541A90CB23B2F3C88DB9A8ECD2280", "1.11" },
-		{ EightPlayerV112Sha256, "1.12" } };
+		{ "E6722B2088594A31938C50B41848ED1241BBC60C5B0F020D30D7B7B5B0F0E650", "1.12" },
+		{ EightPlayerV113Sha256, "1.13" } };
 	const string EightPlayerSection = ".s2mp";
 	const uint OriginalTextEnd = 0x115A0C3E;   // the original's .text VirtualSize; the 8-player mod adds code past it
 	public const string SectionName = ".s2st";
 	const uint ImageBase = 0x10000000;
-	// .data ends at 11CB152C in the original; the 8-player mod v1.11 / v1.12 grows it to 11CB1910. Ours start here,
-	// leaving it room for later versions, and must stay in the same page (11CB2000 is _RDATA); Build refuses an input
-	// whose .data already reaches DataFloor
+	// .data ends at 11CB152C in the original; the 8-player mod v1.11 / v1.12 grows it to 11CB1910, v1.13 to 11CB1964.
+	// Ours start here, leaving it room for later versions, and must stay in the same page (11CB2000 is _RDATA); Build
+	// refuses an input whose .data already reaches DataFloor
 	const uint DataFloor = 0x11CB1C00;
 
 	// ---- the image being patched (file layout) -------------------------------------------------------------------
@@ -254,7 +255,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.23 (milestones 1, 2 and 3, milestone 4 part 1, turn modes hybrid / simultaneous, no battle with a target that moved away, members handed to the AI end, the clans of a shared turn at the top of the screen, a member's retreat from a siege, 8-player mod v1.12, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume / hud log, crash log)";
+	const string LogBuildTag = "shared turns 0.24 (milestones 1, 2 and 3, milestone 4 part 1, turn modes hybrid / simultaneous, no battle with a target that moved away, members handed to the AI end, the clans of a shared turn at the top of the screen, a member's retreat from a siege, a member disbands only its own agents, 8-player mod v1.13, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume / hud log, crash log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = DataFloor + 0x54;      // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = DataFloor + 0x58;   // 1 once "lead's end turn waits" is logged for the running group
@@ -819,6 +820,7 @@ public static class SharedTurnsPatcher {
 	const uint CanEndTurn = 0x106E4F20;        // thiscall(campaign; faction) ret 4 -> al
 	const uint TreasuryGoesNegative = 0x107EF460;   // thiscall(faction+90h) -> al
 	const uint OwnerOf = 0x103E5960;           // thiscall(char+254h) -> owning faction
+	const uint DisbandAllowed = 0x10698630;    // thiscall(char) -> al = the character may be disbanded now (NeqCurF inside)
 	const uint EventInit = 0x10BA5980;         // thiscall(event)
 	const uint EventDispatch = 0x10BE0350;     // cdecl(event*)
 	const uint CharPosition = 0x106E5630;      // thiscall(char) -> eax = &its position (12 bytes; the settlement's or fleet's when inside one)
@@ -2616,6 +2618,49 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
+	static uint EmitDisbandOwn(Asm a) {
+		// replaces "call FUN_10698630" (thiscall(char) -> al = may be disbanded now) at the four UI sites that lead to
+		// CCQ_DISBAND_AGENT: 1125463B (disband button state FUN_11254520), 11245849 (its click FUN_11245750), 11245B29
+		// (the disband FUN_11245a90) and 111EDD85 (the confirmation's OK, code without a Ghidra function at 111EDD40).
+		// FUN_10698630 accepts a character of any group member that hasn't ended (NeqCurF at 1069867B; the command's
+		// handler FUN_108860d0 needs that on every PC), and the panels test only that the local clan may act
+		// (UnitPanelZF), so a member could disband another member's agents. Vanilla gets "own character" from local ==
+		// current; here a character of another human clan (+6A0h) is refused. An AI clan's character passes as before
+		// (the rebels of a revolution's proxy turn). entry: ecx = char; the callers test al and reload edx and ecx.
+		// Keeps ecx and edx.
+		uint at = a.Here;
+		a.Raw(0x52);                                      // push edx
+		a.Raw(0x51);                                      // push ecx                (char)
+		a.Call(DisbandAllowed);                           // al = may be disbanded now (replaced call)
+		a.Raw(0x59);                                      // pop ecx
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J8(0x74, "out");                                // jz out
+		a.Raw(0x51);                                      // push ecx
+		a.Raw(0x81, 0xC1, 0x54, 0x02, 0x00, 0x00);        // add ecx,254h
+		a.Call(OwnerOf);                                  // eax = its clan
+		a.Raw(0x59);                                      // pop ecx
+		a.Raw(0x80, 0xB8, 0xA0, 0x06, 0x00, 0x00, 0x00);  // cmp byte ptr [eax+6A0h],0 (human)
+		a.J8(0x74, "yes");                                // je yes                  (an AI clan)
+		EmitGroupPtr(a, 2, CampaignUiGlobal);             // edx = &ui global
+		a.Raw(0x8B, 0x12);                                // mov edx,[edx]           (ui)
+		a.Raw(0x85, 0xD2);                                // test edx,edx
+		a.J8(0x74, "no");                                 // jz no
+		a.Raw(0x8B, 0x92, 0x98, 0x0A, 0x00, 0x00);        // mov edx,[edx+0A98h]     (model)
+		a.Raw(0x3B, 0x82, 0xB0, 0x00, 0x00, 0x00);        // cmp eax,[edx+0B0h]      (local)
+		a.Raw(0x0F, 0x94, 0xC0);                          // sete al
+		a.J8(0xEB, "out");                                // jmp out
+		a.Mark("no");
+		a.Raw(0x32, 0xC0);                                // xor al,al
+		a.J8(0xEB, "out");                                // jmp out
+		a.Mark("yes");
+		a.Raw(0xB0, 0x01);                                // mov al,1
+		a.Mark("out");
+		a.Raw(0x5A);                                      // pop edx
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
 	static uint EmitDemandActor(Asm a, uint groupAllows) {
 		// replaces "call FUN_1070b4a0" (thiscall(world) -> current-or-proxy) at 11143D98 (Lua PreBattleDemandSurrender
 		// FUN_11143d60) and 111798B2 (the pre-battle panel's DemandSurrender FUN_11179890): the faction that
@@ -4237,6 +4282,10 @@ public static class SharedTurnsPatcher {
 			ExpectBytes(site, 0x8B, 0x40, 0x2C, 0x3B, 0x81, 0xB0, 0x00, 0x00, 0x00);
 			PutCall(site, unitPanelZF, 9);
 		}
+		// ... and their disband of a character only for this PC's own (a member disbanded another member's agents)
+		uint disbandOwn = Sym("DisbandOwn", EmitDisbandOwn(s));
+		foreach (uint site in new uint[] { 0x1125463B, 0x11245849, 0x11245B29, 0x111EDD85 })
+			RedirectCall(site, DisbandAllowed, disbandOwn);
 		uint demandActor = Sym("DemandActor", EmitDemandActor(s, groupAllows));
 		RedirectCall(0x11143D98, CurrentOrProxyFn, demandActor);
 		RedirectCall(0x111798B2, CurrentOrProxyFn, demandActor);
@@ -4866,11 +4915,11 @@ public static class SharedTurnsPatcher {
 		return FindSection(SectionName) >= 0;
 	}
 
-	// what a DLL is as an input to Build ("the original game DLL", "the 8-player co-op mod v1.12", ...), or null when this
+	// what a DLL is as an input to Build ("the original game DLL", "the 8-player co-op mod v1.13", ...), or null when this
 	// mod doesn't build on it: another game build or mod, or a build of this mod (the installer rebuilds from its backup).
 	// supported: the original, or the 8-player version this build was checked with; the installer warns about the rest
 	static string Describe(byte[] d, string hash, out bool supported) {
-		supported = hash == OriginalSha256 || hash == EightPlayerV112Sha256;
+		supported = hash == OriginalSha256 || hash == EightPlayerV113Sha256;
 		if (hash == OriginalSha256) return "the original game DLL";
 		b = d;
 		ReadHeaders();
@@ -4883,7 +4932,8 @@ public static class SharedTurnsPatcher {
 	}
 
 	// the version the 8-player mod writes into its crash report ("Shogun 2 8-player co-op mod v1.12 crash report", since
-	// v1.5), read from its section; null when it has none
+	// v1.5; since v1.13 its event log's header "... mod v1.13: game started" comes first, with the same version), read
+	// from its section; null when it has none
 	static string EightPlayerVersion() {
 		int i = FindSection(EightPlayerSection);
 		string text = Encoding.ASCII.GetString(b, (int)U32(SecOff(i) + 20), (int)Math.Min(U32(SecOff(i) + 8), U32(SecOff(i) + 16)));
