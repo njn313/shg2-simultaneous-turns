@@ -42,10 +42,10 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on, turn mode | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game, hybrid | `9943C83661EBC09CA5D38283F440F6352B6A6F2C0A11A7865CA9A4502E74B757` |
-| the 8-player co-op mod v1.12, hybrid | `23E0A32EC459463E42A5DEB6772E1C0BDD2138A5BC96D1DF5D21564F1DC48378` |
-| the original game, simultaneous | `222AAEC3DDEC7F308EB2B3AF301F3E7BB6916058716817A5EA7D9B9FEAD5D748` |
-| the 8-player co-op mod v1.12, simultaneous | `3366971302C6AFCE90E9C072D2B524FD8D790CE5650ABC9B3F44515B7C00A50B` |
+| the original game, hybrid | `90911AB206BCD62455B1D96E2C50917DBA36CF76EBA9644D7FC6F440B0DFB7D4` |
+| the 8-player co-op mod v1.12, hybrid | `8EC648447E5ADD6ADBBE46CCB81FC951ADE05116B5F56EA0291875E8D3976340` |
+| the original game, simultaneous | `2D9BBA633E4CE694EF0B9316FB114B248F3DCF75D7834B52EB5A5032E90037A6` |
+| the 8-player co-op mod v1.12, simultaneous | `BDC5BA89AA7B6CC9FFC18540151EDFA9916FA75815612FECF3D7CE6B52B44FEB` |
 
 With another version of the 8-player mod the hash is different; it only has to be the same for everyone.
 
@@ -68,20 +68,16 @@ the other, uninstall.
 
 ## If something goes wrong
 Copy `shared_turns.log` from every player's game folder **before** starting the game again (a new start moves it to
-`.log.old`, the start after that overwrites it). After a crash also copy the newest `shogun2_..._crash_....mdmp` from
-the crashed PC's game folder; with the 8-player co-op mod also `eightplayer_crash.txt`, `eightplayer_crash.dmp` and
-`eightplayer_errors.txt` (from every PC whose game closed). If a turn is stuck: everyone quits and the host loads the
-newest save.
+`.log.old`, the start after that overwrites it). Since 0.23 the log also records where the game crashed (`EXCEPTION`
+lines), so after a crash the log of every PC whose game closed is the most useful thing to send; with the 8-player
+co-op mod also its `eightplayer_crash.txt`, `eightplayer_crash.dmp` and `eightplayer_errors.txt` if they exist (the
+game itself writes no crash file). If a turn is stuck: everyone quits and the host loads the newest save.
 What to collect for each kind of problem: [human_test.md](human_test.md).
 
 ## Test plan
 The tests for the current build, and what to send back when one fails, are in **[human_test.md](human_test.md)**.
 
 ## Not done yet
-- **Fixed in 0.23, not yet confirmed in a real game:** up to 0.22, when a player who isn't first picked Retreat in the
-  pre-battle screen of a siege, the army didn't step back, and the next time that player pointed at or clicked the
-  castle the game crashed to the desktop. If it still happens with 0.23, save before retreating from a siege during a
-  shared turn and send the logs.
 - A revolution in the land of a player who isn't first doesn't play out during the shared turn: that player plays
   their next turn alone, after the others (not tested in game yet). During a battle everyone waits, as in the normal
   game (nobody keeps moving while one player fights).
