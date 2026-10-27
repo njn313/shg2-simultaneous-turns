@@ -96,7 +96,8 @@ if ($diag) {
 	$hooks += @(@(0x105A5A96, 'diag may retreat 1'), @(0x105A5B53, 'diag may retreat 2'), @(0x105A5B79, 'diag may retreat 3'),
 		@(0x10605176, 'diag side retreat'), @(0x1060535B, 'diag spot 1'), @(0x10605554, 'diag spot 2'), @(0x1060553C, 'diag move garrison 1'),
 		@(0x106055C0, 'diag move garrison 2'), @(0x106055E1, 'diag move'), @(0x1088393A, 'diag siege object'),
-		@(0x10883987, 'diag besieged order'), @(0x108839BE, 'diag attack order'))
+		@(0x10883987, 'diag besieged order'), @(0x108839BE, 'diag attack order'), @(0x105C5187, 'diag in zone'),
+		@(0x105C51D0, 'diag way out'))
 }
 foreach ($hook in $hooks) {
 	$ins = Mem $hook[0] 5

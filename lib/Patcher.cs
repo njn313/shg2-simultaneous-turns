@@ -4254,11 +4254,15 @@ public static class SharedTurnsPatcher {
 		"!EXCEPTION access (%d: 0 read, 1 write, 8 execute) to %d",                                 // 66
 		"!EXCEPTION stack %d %d",                                                                   // 67
 		"!DIAG exit catcher installed %b, exception logger installed %b",                           // 68
+		"DIAG spot search: the army stands in the enemy's contact zone %b",                         // 69
+		"DIAG spot search: the way out is blocked %b (0 = a way out exists)",                       // 70
+		"DIAG retreat step: the attacker had to walk into contact first (+F0h) %b",                 // 71
 	};
 	const int LogDiagMayRetreat = 53, LogDiagSideRetreat = 54, LogDiagSpot1 = 55, LogDiagSpot2 = 56,
 		LogDiagMoveGarrison = 57, LogDiagMove = 58, LogDiagSiegeObject = 59, LogDiagBesiegedOrder = 60,
 		LogDiagAttackOrder = 61, LogDiagExit = 62, LogDiagExitFrom = 63, LogDiagExitStack = 64, LogDiagException = 65,
-		LogDiagAccess = 66, LogDiagExceptionStack = 67, LogDiagInstalled = 68;
+		LogDiagAccess = 66, LogDiagExceptionStack = 67, LogDiagInstalled = 68, LogDiagInZone = 69, LogDiagWayOut = 70,
+		LogDiagApproach = 71;
 	const uint DiagVa = HudLastDword + 4;      // +00 installed, +04 the DLL's runtime base, +08 / +0C the original
 	                                           // TerminateProcess / ExitProcess, +10 exceptions logged, +14 VirtualProtect's old
 	                                           // protection
@@ -4557,6 +4561,10 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x51);                                      // push ecx                (a2: the battle interrupted a move)
 		a.Raw(0x50);                                      // push eax                (a1: may retreat)
 		CallLog(a, log, LogDiagSideRetreat);
+		a.Raw(0x6A, 0x00);                                // push 0                  (a2)
+		a.Raw(0x0F, 0xB6, 0x8B, 0xF0, 0x00, 0x00, 0x00);  // movzx ecx,byte ptr [ebx+0F0h]
+		a.Raw(0x51);                                      // push ecx                (a1: walk into contact first)
+		CallLog(a, log, LogDiagApproach);
 		a.Raw(0xC3);                                      // ret
 		return at;
 	}
@@ -4589,6 +4597,10 @@ public static class SharedTurnsPatcher {
 		RedirectCall(0x1060553C, 0x108BC2E0, moveGarrison);
 		RedirectCall(0x106055C0, 0x108BC2E0, moveGarrison);
 		RedirectCall(0x106055E1, 0x10903190, Sym("DiagMove", EmitDiagCallResult(s, log, 0x10903190, 4, false, LogDiagMove)));
+		// inside the spot search FUN_105c5130 (at battle set-up through FUN_105c51f0, and in the retreat step): the
+		// contact-zone test FUN_10788010 (cdecl(zone, &position)) and the way-out search FUN_10802900 (0 = found)
+		RedirectCall(0x105C5187, 0x10788010, Sym("DiagInZone", EmitDiagCallResult(s, log, 0x10788010, 2, true, LogDiagInZone)));
+		RedirectCall(0x105C51D0, 0x10802900, Sym("DiagWayOut", EmitDiagCallResult(s, log, 0x10802900, 7, false, LogDiagWayOut)));
 		// CCQ_CHARACTER_ATTACK_GARRISON_RESIDENCE FUN_10883870
 		RedirectCall(0x1088393A, 0x106A0CB0, Sym("DiagSiegeObject", EmitDiagCallResult(s, log, 0x106A0CB0, 0, false, LogDiagSiegeObject)));
 		RedirectCall(0x10883987, 0x1085ADA0, Sym("DiagBesiegedOrder", EmitDiagCallResult(s, log, 0x1085ADA0, 3, false, LogDiagBesiegedOrder)));
