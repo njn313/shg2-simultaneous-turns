@@ -69,13 +69,17 @@ the other, uninstall.
 ## If something goes wrong
 Copy `shared_turns.log` from every player's game folder **before** starting the game again (a new start moves it to
 `.log.old`, the start after that overwrites it). After a crash also copy the newest `shogun2_..._crash_....mdmp` from
-the crashed PC's game folder. If a turn is stuck: everyone quits and the host loads the newest save.
+the crashed PC's game folder; with the 8-player co-op mod also `eightplayer_crash.txt`, `eightplayer_crash.dmp` and
+`eightplayer_errors.txt` (from every PC whose game closed). If a turn is stuck: everyone quits and the host loads the
+newest save.
 What to collect for each kind of problem: [human_test.md](human_test.md).
 
 ## Test plan
 The tests for the current build, and what to send back when one fails, are in **[human_test.md](human_test.md)**.
 
 ## Not done yet
+- **Reported, not solved yet:** a player who isn't first besieged a castle ("Continue siege") and every PC froze and
+  crashed (8-player co-op mod, 4 players). Until it's fixed: save before laying siege during a shared turn.
 - A revolution in the land of a player who isn't first doesn't play out during the shared turn: that player plays
   their next turn alone, after the others (not tested in game yet). During a battle everyone waits, as in the normal
   game (nobody keeps moving while one player fights).

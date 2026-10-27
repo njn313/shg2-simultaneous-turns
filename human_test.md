@@ -27,16 +27,21 @@ The short checklist is in `README.md` ("Test plan"); this file has the details.
     turn) appear only on the PC where it happened, and `MESSAGE` lines may differ between PCs; every other line should be the same on every PC. Each new game start moves the previous log to
     `shared_turns.log.old`, so **copy it before starting the game a second time** after a problem.
   - `shogun2_..._crash_....mdmp`: the game writes one when it crashes. Only the newest one matters.
+  - With the 8-player co-op mod installed, its crash reporter writes `eightplayer_crash.txt` and
+    `eightplayer_crash.dmp` when the game crashes, and `eightplayer_errors.txt` when the game closes itself after an
+    internal error (no crash window). A new crash overwrites them: copy them right away.
 
 ## Shared turns (current build)
 Setup: a new multiplayer campaign with 2 humans (3 or more need the 8-player co-op mod) who are **allied** (co-op campaign). Write down whether the
 clans are allied or only at peace: at peace, moving into the other's land asks first (the game's normal trespass
-question), that's not a bug. Battles started by a player during a shared turn are tests 9a-9f.
+question), that's not a bug. Battles started by a player during a shared turn are tests 9a-9g.
 
 "The first player" below is the human whose clan comes first in the turn order.
 
 Known problems in this build (found in the tests so far; no need to report them again unless something new happens):
 - Event messages (agent discovered and the like) of a player who isn't first may pop up during the AI turns (test 17).
+- One report (8-player mod, 4 players, simultaneous): a player who isn't first besieged a castle and every PC froze
+  and crashed, twice. Test 9g repeats it; the host saves first.
 
 For each test, note pass / fail and anything odd, even if it didn't break the game.
 
@@ -69,6 +74,7 @@ For each test, note pass / fail and anything odd, even if it didn't break the ga
 | 9d | A player who isn't first attacks an AI army and autoresolves. | The same result on every PC; everyone can move afterwards. |
 | 9e | A player who isn't first takes an AI settlement (siege assault). | After the battle the army moves into the settlement and it belongs to that clan on every PC. Note any extra popup or question and who got it. |
 | 9f | Two players of the group have armies next to each other; one of them attacks an AI army standing next to both. | Note whether the other player's army joins the battle and who commands it. The same result on every PC; both can move afterwards. |
+| 9g | The host saves first. A player who isn't first attacks an AI castle and picks **Continue siege** in the pre-battle screen (not Attack, not Autoresolve). Then nobody clicks for 30 seconds. Then that player clicks the castle again with the same army. Then the first player does the same at another castle. Try it first without the 8-player mod (2 players), then with it, then with 3 or more players; note which. | Nothing freezes: the army stays at the castle and keeps the siege, everyone can still move and end the turn, and the second click opens the siege screen again. The log has `BATTLE new: <clan> attacks <castle owner>`, `ready from <clan>, choice 5`, `state 1 -> 9` and `state 9 -> 10` on every PC. If it freezes or crashes: note whose PC went first, whether the window stopped responding or the game closed by itself, and how long it took; collect the crash files (below) and the log from **every** PC. |
 | 10 | (Hybrid) The first player declares war on another human (diplomacy). | From the next round, that human plays alone, after the others. |
 | 22 | (Simultaneous) Two players at war with each other (a head-to-head campaign, or declare war as in test 10). | Both play at the same time from the start of the turn, and in every later turn; the AI clans move after both have ended. The log has `START group, lead ...` with 2 members. |
 | 23 | (Simultaneous) One player attacks the other's army while the other is still moving; then the other way round; once a siege of the other's settlement. | The defender gets the pre-battle choice; everyone waits for the battle as usual; afterwards both can move again; the same result on every PC; no "out of sync". |
@@ -99,7 +105,8 @@ Note the time, the turn number and the test number first. Then:
 
 | What happens | What to collect |
 |---|---|
-| **The game crashes** (closes or "stopped working") | On that PC, from the game folder: the newest `shogun2_..._crash_....mdmp` (check its time) and `shared_turns.log` (if the game was started again since, `shared_turns.log.old`). If there's no new `.mdmp`: press Win+R, type `eventvwr.msc`, open **Windows Logs → Application**, find the **Application Error** entry at the crash time for `Shogun2.exe`, press Ctrl+C and paste it into a text file. The other players: their `shared_turns.log`. |
+| **The game crashes** (closes or "stopped working") | On that PC, from the game folder: the newest `shogun2_..._crash_....mdmp` (check its time), with the 8-player mod `eightplayer_crash.txt`, `eightplayer_crash.dmp` and `eightplayer_errors.txt` (check their time too), and `shared_turns.log` (if the game was started again since, `shared_turns.log.old`). If none of these crash files is new: press Win+R, type `eventvwr.msc`, open **Windows Logs → Application**, find the **Application Error** entry at the crash time for `Shogun2.exe`, press Ctrl+C and paste it into a text file. The other players: their `shared_turns.log` (and their crash files, if their game closed too). |
+| **The game freezes** (the window stops responding) | Wait a minute and note whether it comes back. If you have to close it: the same files as for a crash, and in `eventvwr.msc` the **Application Hang** entry for `Shogun2.exe`. Note whose PC froze first and what each player saw. |
 | **The turn gets stuck** (nobody can end, the AI never starts, someone can't move) | Write down who the first player was, who pressed End Turn and in what order, what each player's End Turn button looked like, and whether armies could still move. If it started with an attack or a popup: who attacked whom (AI or human army, at war or at peace, did either side have allies), which popup or screen appeared on which PC, and what was clicked. Copy `shared_turns.log` **from every player** before anything else. Then everyone quits and the host loads the newest save. |
 | **"Out of sync" popup** | `shared_turns.log` and the newest files from the game's `logs` folder **from every player**, and what everyone did just before. |
 | **An army won't move** (red cross, or the order is ignored) | Which player (first or not), which army, from where to where, allied or at peace with the land it enters. `shared_turns.log` from every player: the `CLICK` line says what the cursor offered (order type 0 = red cross), the `MOVE` line why the game refused (reason bits are listed in the line). |
