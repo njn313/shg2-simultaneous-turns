@@ -7,7 +7,9 @@
 #
 #   powershell -ExecutionPolicy Bypass -File install.ps1 [-Mode hybrid|simultaneous] [-GamePath "<game folder>"]
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall [-GamePath "<game folder>"]
-param([string]$GamePath = '', [string]$Mode = '', [switch]$Uninstall)
+# -Diagnostics: a diagnostics build for one bug hunt (extra lines in shared_turns.log); its hash differs from the
+# README's, so every player in that test installs it the same way. A normal install replaces it.
+param([string]$GamePath = '', [string]$Mode = '', [switch]$Uninstall, [switch]$Diagnostics)
 $ErrorActionPreference = 'Stop'
 if (-not ('SharedTurnsPatcher' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'lib\Patcher.cs') }
 function Sha($p) { (Get-FileHash $p -Algorithm SHA256).Hash }
@@ -98,6 +100,8 @@ if (-not $Mode) {
 }
 if ($Mode -ne 'hybrid' -and $Mode -ne 'simultaneous') { throw "-Mode must be hybrid or simultaneous. Nothing was changed." }
 $tmp = "$dll.sharedturns-new"
+[SharedTurnsPatcher]::Diagnostics = [bool]$Diagnostics
+if ($Diagnostics) { ""; "DIAGNOSTICS BUILD: extra log lines for a bug hunt; every player in the test installs it with -Diagnostics." }
 try { [SharedTurnsPatcher]::Build($source, $tmp, $Mode) | Out-Null }
 catch {
 	if (Test-Path $tmp) { Remove-Item $tmp }

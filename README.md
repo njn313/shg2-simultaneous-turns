@@ -42,10 +42,10 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on, turn mode | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game, hybrid | `45575970A4906CBEF3CD5492ACC40B566799CF69FF4854CF5F7E72FF0EDC4354` |
-| the 8-player co-op mod v1.12, hybrid | `8E016FE5C838A1131882F8D5090C706E0E5D4707254F0B979D71C39BCB2C56C4` |
-| the original game, simultaneous | `8801A72D830235A8CE377AB281D126F032F5BB885C612C0D6A2FBBDB80CE001C` |
-| the 8-player co-op mod v1.12, simultaneous | `7BE950D46280902EEBCFDB24765DEDCF9527411F0A8A0B95CF3CFDD43F4CAEDF` |
+| the original game, hybrid | `90911AB206BCD62455B1D96E2C50917DBA36CF76EBA9644D7FC6F440B0DFB7D4` |
+| the 8-player co-op mod v1.12, hybrid | `8EC648447E5ADD6ADBBE46CCB81FC951ADE05116B5F56EA0291875E8D3976340` |
+| the original game, simultaneous | `2D9BBA633E4CE694EF0B9316FB114B248F3DCF75D7834B52EB5A5032E90037A6` |
+| the 8-player co-op mod v1.12, simultaneous | `BDC5BA89AA7B6CC9FFC18540151EDFA9916FA75815612FECF3D7CE6B52B44FEB` |
 
 With another version of the 8-player mod the hash is different; it only has to be the same for everyone.
 
@@ -68,8 +68,10 @@ the other, uninstall.
 
 ## If something goes wrong
 Copy `shared_turns.log` from every player's game folder **before** starting the game again (a new start moves it to
-`.log.old`, the start after that overwrites it). After a crash also copy the newest `shogun2_..._crash_....mdmp` from
-the crashed PC's game folder. If a turn is stuck: everyone quits and the host loads the newest save.
+`.log.old`, the start after that overwrites it). Since 0.23 the log also records where the game crashed (`EXCEPTION`
+lines), so after a crash the log of every PC whose game closed is the most useful thing to send; with the 8-player
+co-op mod also its `eightplayer_crash.txt`, `eightplayer_crash.dmp` and `eightplayer_errors.txt` if they exist (the
+game itself writes no crash file). If a turn is stuck: everyone quits and the host loads the newest save.
 What to collect for each kind of problem: [human_test.md](human_test.md).
 
 ## Test plan
