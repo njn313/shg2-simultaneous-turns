@@ -40,9 +40,9 @@ question), that's not a bug. Battles started by a player during a shared turn ar
 
 Known problems in this build (found in the tests so far; no need to report them again unless something new happens):
 - Event messages (agent discovered and the like) of a player who isn't first may pop up during the AI turns (test 17).
-- A player who isn't first picks Retreat in a siege's pre-battle screen, then the first player gives an order: the
-  game crashed to the desktop (a tester's game with 4 players and ours with 2, both with the 8-player mod). Test 9g;
-  save first.
+- A player who isn't first picks Retreat in a siege's pre-battle screen and then clicks the castle again: the game
+  crashes to the desktop (a tester's game with 4 players and ours with 2, both with the 8-player mod). Test 9g; save
+  first.
 
 For each test, note pass / fail and anything odd, even if it didn't break the game.
 
@@ -75,7 +75,7 @@ For each test, note pass / fail and anything odd, even if it didn't break the ga
 | 9d | A player who isn't first attacks an AI army and autoresolves. | The same result on every PC; everyone can move afterwards. |
 | 9e | A player who isn't first takes an AI settlement (siege assault). | After the battle the army moves into the settlement and it belongs to that clan on every PC. Note any extra popup or question and who got it. |
 | 9f | Two players of the group have armies next to each other; one of them attacks an AI army standing next to both. | Note whether the other player's army joins the battle and who commands it. The same result on every PC; both can move afterwards. |
-| 9g | The host saves first. A player who isn't first attacks an AI castle and picks **Retreat** in the pre-battle screen. Within a few seconds the first player gives an order: an army marches out of a castle (or moves). Once with the 8-player mod, once without it (2 players); note which. | Nothing crashes: the retreating army steps back, the first player's army moves, everyone can still move and end the turn. The log has `ready from <clan>, choice 5`, `state 1 -> 9` and `state 9 -> 10` on every PC. **This crashed every PC to the desktop twice (2026-10-27, with the 8-player mod).** If it crashes: note on which PCs, and collect the crash files (below) and the log from **every** PC. |
+| 9g | The host saves first. A player who isn't first attacks an AI castle and picks **Retreat** in the pre-battle screen; note what that army does and whether other armies that were moving stop. Then that player clicks the castle again. Then the first player does the same at another castle, for comparison. Once with the 8-player mod, once without it (2 players); note which. | The retreat works and the second click opens the pre-battle screen again; armies elsewhere keep their orders. The log has `ready from <clan>, choice 5`, `state 1 -> 9` and `state 9 -> 10` on every PC. **In build 0.22 the second click crashed the game to the desktop (2026-10-27, with the 8-player mod), and any army moving at the retreat stopped and lost its order.** If it crashes: note on which PCs, and collect the crash files (below) and the log from **every** PC. |
 | 10 | (Hybrid) The first player declares war on another human (diplomacy). | From the next round, that human plays alone, after the others. |
 | 22 | (Simultaneous) Two players at war with each other (a head-to-head campaign, or declare war as in test 10). | Both play at the same time from the start of the turn, and in every later turn; the AI clans move after both have ended. The log has `START group, lead ...` with 2 members. |
 | 23 | (Simultaneous) One player attacks the other's army while the other is still moving; then the other way round; once a siege of the other's settlement. | The defender gets the pre-battle choice; everyone waits for the battle as usual; afterwards both can move again; the same result on every PC; no "out of sync". |
