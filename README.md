@@ -78,8 +78,9 @@ What to collect for each kind of problem: [human_test.md](human_test.md).
 The tests for the current build, and what to send back when one fails, are in **[human_test.md](human_test.md)**.
 
 ## Not done yet
-- **Reported, not solved yet:** a player who isn't first besieged a castle ("Continue siege") and every PC froze and
-  crashed (8-player co-op mod, 4 players). Until it's fixed: save before laying siege during a shared turn.
+- **Known crash, not solved yet:** when a player who isn't first picks Retreat in the pre-battle screen of a siege
+  and the first player gives an order right after, the game crashes to the desktop. Until it's fixed: don't retreat
+  from a siege during a shared turn, or save first.
 - A revolution in the land of a player who isn't first doesn't play out during the shared turn: that player plays
   their next turn alone, after the others (not tested in game yet). During a battle everyone waits, as in the normal
   game (nobody keeps moving while one player fights).
