@@ -1,6 +1,6 @@
 # Shogun 2 Shared Turns (experimental): installer and uninstaller.
 # Patches the player's own empire.retail.dll: the original game DLL, or the 8-player co-op mod when that is installed
-# (install the 8-player mod first, then this one). This build was checked with the 8-player mod v1.12; any other
+# (install the 8-player mod first, then this one). This build was checked with the 8-player mod v1.13; any other
 # version is built on too, with a warning. The DLL it patched is kept next to it as empire.retail.dll.sharedturns-base
 # and put back by -Uninstall. Every player must end up with the same DLL hash, so everyone picks the same turn mode
 # (asked when -Mode isn't given; Enter = hybrid) and has the same 8-player mod version, or none.
@@ -84,9 +84,9 @@ $supported = [SharedTurnsPatcher]::IsSupported($source)
 if (-not $supported) {
 	""
 	"WARNING: this game has $from."
-	"  This version of Shared Turns was checked with the 8-player co-op mod v1.12 only. It installs anyway (and stops if"
+	"  This version of Shared Turns was checked with the 8-player co-op mod v1.13 only. It installs anyway (and stops if"
 	"  the two mods would change the same code), but this combination is not officially supported and may misbehave in"
-	"  game. Updating the 8-player mod to v1.12 is the safe choice. Every player needs the same 8-player version."
+	"  game. Updating the 8-player mod to v1.13 is the safe choice. Every player needs the same 8-player version."
 }
 if (-not $Mode) {
 	""
@@ -108,7 +108,7 @@ catch {
 	$e = $_.Exception
 	if ($e.InnerException) { $e = $e.InnerException }
 	if ($supported) { throw "Building Shared Turns on $from failed: $($e.Message). Nothing was changed. Please report this." }
-	throw ("Shared Turns can't be built on $from`: $($e.Message). Nothing was changed. Update the 8-player mod to v1.12 " +
+	throw ("Shared Turns can't be built on $from`: $($e.Message). Nothing was changed. Update the 8-player mod to v1.13 " +
 		"(or get a Shared Turns made for your version) and run this again.")
 }
 $new = Sha $tmp
@@ -121,10 +121,10 @@ else {
 ""
 "empire.retail.dll sha256 $new"
 "Every player must see the same hash: the same turn mode, and all with the same 8-player mod version or all without"
-"(README lists the hashes for the original game and the 8-player mod v1.12)."
+"(README lists the hashes for the original game and the 8-player mod v1.13)."
 ""
 "Reminders:"
 "  - EXPERIMENTAL. Steam no longer lists VAC for Shogun 2, but this changes the engine DLL: a spare account is the extra-safe choice."
-if (-not $supported) { "  - Not officially supported: $from (this build was checked with the 8-player mod v1.12)." }
+if (-not $supported) { "  - Not officially supported: $from (this build was checked with the 8-player mod v1.13)." }
 "  - Undo:  Uninstall.bat  (or install.ps1 -Uninstall)"
 "  - Adding the 8-player mod later: uninstall this first, install the 8-player mod, then install this again."
