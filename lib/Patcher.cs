@@ -254,7 +254,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.22 (milestones 1, 2 and 3, milestone 4 part 1, turn modes hybrid / simultaneous, no battle with a target that moved away, members handed to the AI end, the clans of a shared turn at the top of the screen, 8-player mod v1.12, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume / hud log)";
+	const string LogBuildTag = "shared turns 0.23 (milestones 1, 2 and 3, milestone 4 part 1, turn modes hybrid / simultaneous, no battle with a target that moved away, members handed to the AI end, the clans of a shared turn at the top of the screen, a member's retreat from a siege, 8-player mod v1.12, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume / hud log)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = DataFloor + 0x54;      // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = DataFloor + 0x58;   // 1 once "lead's end turn waits" is logged for the running group
@@ -319,6 +319,7 @@ public static class SharedTurnsPatcher {
 		"SAVE the group goes into the save: lead %f, %d member slots",     // 50
 		"ATTACK %f reached where the army of %f stood when the attack was ordered, but that army has moved: no battle",   // 51
 		"HUD the top of the screen shows the clans of the shared turn of %f, %d member slots (at most 5 shown; this PC only)",   // 52
+		"RETREAT %f retreats from a siege in the shared turn: the pathfinder sees the map as that clan until the battle ends",   // 53
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
@@ -329,7 +330,7 @@ public static class SharedTurnsPatcher {
 		LogAccessBlocked = 33, LogAccessKept = 34, LogClickPf = 35, LogPendingPush = 36, LogPendingPop = 37,
 		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41, LogLoadSave = 42, LogMessageShow = 43,
 		LogMessageHide = 44, LogNegotiationDropped = 45, LogNegotiationUiBlocked = 46, LogResumeMembers = 47,
-		LogLoadGroup = 48, LogRevolt = 49, LogSaveGroup = 50, LogAttackMoved = 51, LogHud = 52;
+		LogLoadGroup = 48, LogRevolt = 49, LogSaveGroup = 50, LogAttackMoved = 51, LogHud = 52, LogRetreatView = 53;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -784,7 +785,8 @@ public static class SharedTurnsPatcher {
 	const uint UiPfActiveVa = GroupVa + 0x68;  // 1 while the UI has set the pathfinder up for the local member
 	const uint UiPfSavedVa = GroupVa + 0x6C;   // +0 pf, +4 its kept faction [pf+1F4h], +8 its kept mode [pf+208h]
 	const uint PfLastDword = GroupVa + 0x74;
-	// GroupVa + 78h, + 80h: the resync key state until build 0.16 (free now)
+	// GroupVa + 78h, + 80h: the resync key state until build 0.16; + 78h since build 0.23:
+	const uint RetreatViewVa = GroupVa + 0x78;   // the member a siege retreat set [campaign+159Ch] to (RetreatView), until state 10
 	const int PfDwords = 0x1C / 4;             // PfFocusVa .. PfLastDword
 	const uint PfBuiltForVa = GroupVa + 0x7C;  // log only: the faction the pathfinder's region flags were last built for
 	// the group in the save (milestone 4: SaveGroup, LoadGroup, GroupRestore):
@@ -2852,6 +2854,8 @@ public static class SharedTurnsPatcher {
 		// state setter FUN_1057fca0 (thiscall(sm = pb+4Ch; state) ret 4, every caller is pending-battle code), replaces
 		// "mov eax,[esp+4] / push esi" at its entry (5 bytes): logs old [sm+4] -> new when they differ. eax and the
 		// flags are dead at the entry
+		// Since build 0.23 also the end of RetreatView: at state 10 the map view a member's siege retreat set goes back
+		// to the current clan ([sm] = the campaign, the state machine's owner)
 		uint at = a.Here;
 		a.Raw(0x8B, 0x44, 0x24, 0x04);                    // mov eax,[esp+4]         (new)
 		a.Raw(0x3B, 0x41, 0x04);                          // cmp eax,[ecx+4]         (old)
@@ -2860,9 +2864,73 @@ public static class SharedTurnsPatcher {
 		a.Raw(0xFF, 0x71, 0x04);                          // push dword ptr [ecx+4]
 		CallLog(a, log, LogBattleState);
 		a.Mark("same");
+		a.Raw(0x83, 0x7C, 0x24, 0x04, 0x0A);              // cmp dword ptr [esp+4],0Ah (back to idle?)
+		a.J8(0x75, "keep");                               // jne keep
+		a.Raw(0x57);                                      // push edi
+		a.Raw(0x52);                                      // push edx
+		EmitGroupPtr(a, 7, RetreatViewVa);                // edi = &retreatView
+		a.Raw(0x8B, 0x07);                                // mov eax,[edi]
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "restore");                            // jz restore              (no retreat set the view)
+		a.Raw(0xC7, 0x07, 0x00, 0x00, 0x00, 0x00);        // mov dword ptr [edi],0
+		a.Raw(0x8B, 0x11);                                // mov edx,[ecx]           (campaign)
+		a.Raw(0x85, 0xD2);                                // test edx,edx
+		a.J8(0x74, "restore");                            // jz restore
+		a.Raw(0x39, 0x82, 0x9C, 0x15, 0x00, 0x00);        // cmp [edx+159Ch],eax     (still ours?)
+		a.J8(0x75, "restore");                            // jne restore             (engine code changed it since)
+		a.Raw(0xC7, 0x82, 0x9C, 0x15, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);   // mov dword ptr [edx+159Ch],0
+		a.Mark("restore");
+		a.Raw(0x5A);                                      // pop edx
+		a.Raw(0x5F);                                      // pop edi
+		a.Mark("keep");
 		a.Raw(0x8B, 0x44, 0x24, 0x04);                    // mov eax,[esp+4]         (replaced)
 		a.Raw(0x56);                                      // push esi                (replaced)
 		a.Jmp(0x1057FCA5);
+		a.Resolve();
+		return at;
+	}
+
+	// ---- a member's retreat from a siege (build 0.23; NOTES "Siege: a member retreats, then clicks the castle again") -
+	// Retreat in a siege's pre-battle screen (choice 5): the battle's state 9 (FUN_10604260, +C3h) looks for a spot
+	// outside the castle's contact zone (FUN_105c5130 -> the way-out search FUN_10802900) and walks the army there,
+	// ending the siege. The pathfinder's obstacles (the castle's garrison, re-registered just before the search through
+	// FUN_10567050 -> FUN_1077a7d0 -> FUN_1077bd10) are judged from the "viewed" clan FUN_1070b4d0: [campaign+159Ch]
+	// when set (only the guard FUN_10750d10 sets it, as the battle's set-up does for each army), else the current
+	// clan. Vanilla's retreating attacker is always the current clan; a member's retreat in a shared turn was judged
+	// from the lead's view, found the way out blocked, didn't walk back and skipped the siege's end, and the next
+	// attack cursor or order on that castle (FUN_1069c7b0) read the half-ended siege's null object: the crash.
+	// Fix: while a member's siege retreat runs (from this check to the battle's state 10), the viewed clan is that
+	// member, as it is for the current clan in vanilla. Deterministic: set and cleared in the simulation.
+	static uint EmitRetreatView(Asm a, uint groupSlot, uint sideRetreat, uint log) {
+		// replaces "call FUN_105c4c20" at 10605176 (thiscall(side) -> al: may one of the attacking side's armies
+		// retreat), the attacker's branch of state 9 with +C3h. ebx = the pending battle (kept by the callee), ecx = its
+		// attacker side ([pb+60h]); the caller tests al and reloads ecx
+		uint at = a.Here;
+		a.Call(sideRetreat);
+		a.Raw(0x84, 0xC0);                                // test al,al
+		a.J8(0x74, "out");                                // jz out                  (nothing retreats: vanilla)
+		a.Raw(0x60);                                      // pushad
+		a.Raw(0x8B, 0x4B, 0x60);                          // mov ecx,[ebx+60h]       (the attacker side)
+		a.Raw(0x8B, 0x49, 0x0C);                          // mov ecx,[ecx+0Ch]       (its clan, as FUN_105cb330 reads it)
+		a.Call(groupSlot);                                // eax = its member slot or -1, edx = &group
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x7E, "done");                               // jle done                (the lead, or not a member: vanilla)
+		a.Raw(0x8B, 0x73, 0x30);                          // mov esi,[ebx+30h]       (model)
+		a.Raw(0x8B, 0x76, 0x08);                          // mov esi,[esi+8]         (campaign)
+		a.Raw(0x8B, 0x86, 0x98, 0x14, 0x00, 0x00);        // mov eax,[esi+1498h]     (world)
+		a.Raw(0x8B, 0x40, 0x2C);                          // mov eax,[eax+2Ch]       (current)
+		a.Raw(0x3B, 0x42, 0x34);                          // cmp eax,[edx+34h]       (the lead is current)
+		a.J8(0x75, "done");                               // jne done
+		a.Raw(0x89, 0x8E, 0x9C, 0x15, 0x00, 0x00);        // mov [esi+159Ch],ecx     (the map as the member sees it)
+		EmitGroupPtr(a, 7, RetreatViewVa);                // edi = &retreatView
+		a.Raw(0x89, 0x0F);                                // mov [edi],ecx           (ours: undone at state 10)
+		a.Raw(0x6A, 0x00);                                // push 0                  (a2)
+		a.Raw(0x51);                                      // push ecx                (a1: the member)
+		CallLog(a, log, LogRetreatView);
+		a.Mark("done");
+		a.Raw(0x61);                                      // popad
+		a.Mark("out");
+		a.Raw(0xC3);                                      // ret
 		a.Resolve();
 		return at;
 	}
@@ -4184,6 +4252,11 @@ public static class SharedTurnsPatcher {
 		PutJmp(0x1057FCA0, Sym("BattleStateLog", EmitBattleStateLog(s, log)), 5);
 		RedirectCall(0x1088A5DD, 0x106FE6C0, Sym("BattleReadyLog", EmitBattleReadyLog(s, log)));
 
+		// Build 0.23: a member's retreat from a siege sees the map as that member (RetreatView; back at state 10 in
+		// BattleStateLog above). The diagnostics build logs the check it wraps (DiagSideRetreat).
+		uint sideRetreat = Diagnostics ? Sym("DiagSideRetreat", EmitDiagSideRetreat(s, log)) : 0x105C4C20;
+		RedirectCall(0x10605176, 0x105C4C20, Sym("RetreatView", EmitRetreatView(s, groupSlot, sideRetreat, log)));
+
 		// Fix 6: the members' orders left from the turn (queued moves) move on during the lead's end of turn, as vanilla
 		// does for the current faction's
 		RedirectCall(0x106B4088, FactionResumeOrder, Sym("EndMoves", EmitEndMoves(s, pfFocusFor, pfRestore, log)));
@@ -4238,31 +4311,34 @@ public static class SharedTurnsPatcher {
 	//    exception handler logs error-severity exceptions (code, address, stack) before anything else sees them and
 	//    always passes them on. Addresses inside the DLL are logged at image base 10000000h, decimal.
 	static readonly string[] DiagLogEvents = {
-		"DIAG battle set-up: may the army of %f retreat? %b",                                       // 53
-		"DIAG retreat step: may an army of the attacking side retreat? %b (battle interrupted a move %b)",   // 54
-		"DIAG retreat step: retreat spot found (first search) %b",                                  // 55
-		"DIAG retreat step: retreat spot found (second search) %b",                                 // 56
-		"DIAG retreat step: retreat move from a garrison issued %b",                                // 57
-		"DIAG retreat step: retreat move issued %b",                                                // 58
-		"DIAG attack on a settlement: the army's siege object %d (0 = none)",                       // 59
-		"DIAG attack on a settlement: order on the castle it besieges set up %b",                   // 60
-		"DIAG attack on a settlement: attack order set up %b",                                      // 61
-		"!EXIT the game ends itself: %d (1 TerminateProcess, 2 ExitProcess), exit code %d",         // 62
-		"!EXIT called from %d, DLL loaded at %d",                                                   // 63
-		"!EXIT stack %d %d",                                                                        // 64
-		"!EXCEPTION code %d at %d",                                                                 // 65
-		"!EXCEPTION access (%d: 0 read, 1 write, 8 execute) to %d",                                 // 66
-		"!EXCEPTION stack %d %d",                                                                   // 67
-		"!DIAG exit catcher installed %b, exception logger installed %b",                           // 68
-		"DIAG spot search: the army stands in the enemy's contact zone %b",                         // 69
-		"DIAG spot search: the way out is blocked %b (0 = a way out exists)",                       // 70
-		"DIAG retreat step: the attacker had to walk into contact first (+F0h) %b",                 // 71
+		"DIAG battle set-up: may the army of %f retreat? %b",                                       // base+0
+		"DIAG retreat step: may an army of the attacking side retreat? %b (battle interrupted a move %b)",   // base+1
+		"DIAG retreat step: retreat spot found (first search) %b",                                  // base+2
+		"DIAG retreat step: retreat spot found (second search) %b",                                 // base+3
+		"DIAG retreat step: retreat move from a garrison issued %b",                                // base+4
+		"DIAG retreat step: retreat move issued %b",                                                // base+5
+		"DIAG attack on a settlement: the army's siege object %d (0 = none)",                       // base+6
+		"DIAG attack on a settlement: order on the castle it besieges set up %b",                   // base+7
+		"DIAG attack on a settlement: attack order set up %b",                                      // base+8
+		"!EXIT the game ends itself: %d (1 TerminateProcess, 2 ExitProcess), exit code %d",         // base+9
+		"!EXIT called from %d, DLL loaded at %d",                                                   // base+10
+		"!EXIT stack %d %d",                                                                        // base+11
+		"!EXCEPTION code %d at %d",                                                                 // base+12
+		"!EXCEPTION access (%d: 0 read, 1 write, 8 execute) to %d",                                 // base+13
+		"!EXCEPTION stack %d %d",                                                                   // base+14
+		"!DIAG exit catcher installed %b, exception logger installed %b",                           // base+15
+		"DIAG spot search: the army stands in the enemy's contact zone %b",                         // base+16
+		"DIAG spot search: the way out is blocked %b (0 = a way out exists)",                       // base+17
+		"DIAG retreat step: the attacker had to walk into contact first (+F0h) %b",                 // base+18
 	};
-	const int LogDiagMayRetreat = 53, LogDiagSideRetreat = 54, LogDiagSpot1 = 55, LogDiagSpot2 = 56,
-		LogDiagMoveGarrison = 57, LogDiagMove = 58, LogDiagSiegeObject = 59, LogDiagBesiegedOrder = 60,
-		LogDiagAttackOrder = 61, LogDiagExit = 62, LogDiagExitFrom = 63, LogDiagExitStack = 64, LogDiagException = 65,
-		LogDiagAccess = 66, LogDiagExceptionStack = 67, LogDiagInstalled = 68, LogDiagInZone = 69, LogDiagWayOut = 70,
-		LogDiagApproach = 71;
+	// their ids follow LogEvents (base = LogEvents.Length)
+	static readonly int LogDiagMayRetreat = LogEvents.Length + 0, LogDiagSideRetreat = LogEvents.Length + 1, LogDiagSpot1 = LogEvents.Length + 2,
+		LogDiagSpot2 = LogEvents.Length + 3, LogDiagMoveGarrison = LogEvents.Length + 4, LogDiagMove = LogEvents.Length + 5,
+		LogDiagSiegeObject = LogEvents.Length + 6, LogDiagBesiegedOrder = LogEvents.Length + 7, LogDiagAttackOrder = LogEvents.Length + 8,
+		LogDiagExit = LogEvents.Length + 9, LogDiagExitFrom = LogEvents.Length + 10, LogDiagExitStack = LogEvents.Length + 11,
+		LogDiagException = LogEvents.Length + 12, LogDiagAccess = LogEvents.Length + 13, LogDiagExceptionStack = LogEvents.Length + 14,
+		LogDiagInstalled = LogEvents.Length + 15, LogDiagInZone = LogEvents.Length + 16, LogDiagWayOut = LogEvents.Length + 17,
+		LogDiagApproach = LogEvents.Length + 18;
 	const uint DiagVa = HudLastDword + 4;      // +00 installed, +04 the DLL's runtime base, +08 / +0C the original
 	                                           // TerminateProcess / ExitProcess, +10 exceptions logged, +14 VirtualProtect's old
 	                                           // protection
@@ -4589,8 +4665,8 @@ public static class SharedTurnsPatcher {
 		// the battle's per-army "may retreat", as the battle is built
 		uint mayRetreat = Sym("DiagMayRetreat", EmitDiagMayRetreat(s, log));
 		foreach (uint site in new uint[] { 0x105A5A96, 0x105A5B53, 0x105A5B79 }) RedirectCall(site, 0x105C5700, mayRetreat);
-		// the retreat step (state 9 with +C3h) for the attacker
-		RedirectCall(0x10605176, 0x105C4C20, Sym("DiagSideRetreat", EmitDiagSideRetreat(s, log)));
+		// the retreat step (state 9 with +C3h) for the attacker (its first check, 10605176, is RetreatView's; it calls
+		// DiagSideRetreat in this build)
 		RedirectCall(0x1060535B, 0x105B7D10, Sym("DiagSpot1", EmitDiagCallResult(s, log, 0x105B7D10, 4, true, LogDiagSpot1)));
 		RedirectCall(0x10605554, 0x105C5130, Sym("DiagSpot2", EmitDiagCallResult(s, log, 0x105C5130, 2, true, LogDiagSpot2)));
 		uint moveGarrison = Sym("DiagMoveGarrison", EmitDiagCallResult(s, log, 0x108BC2E0, 6, false, LogDiagMoveGarrison));

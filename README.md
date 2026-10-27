@@ -42,10 +42,10 @@ Everyone must end up with the same hash, or they can't join each other. The inst
 
 | Installed on, turn mode | `empire.retail.dll` SHA-256 |
 |---|---|
-| the original game, hybrid | `45575970A4906CBEF3CD5492ACC40B566799CF69FF4854CF5F7E72FF0EDC4354` |
-| the 8-player co-op mod v1.12, hybrid | `8E016FE5C838A1131882F8D5090C706E0E5D4707254F0B979D71C39BCB2C56C4` |
-| the original game, simultaneous | `8801A72D830235A8CE377AB281D126F032F5BB885C612C0D6A2FBBDB80CE001C` |
-| the 8-player co-op mod v1.12, simultaneous | `7BE950D46280902EEBCFDB24765DEDCF9527411F0A8A0B95CF3CFDD43F4CAEDF` |
+| the original game, hybrid | `9943C83661EBC09CA5D38283F440F6352B6A6F2C0A11A7865CA9A4502E74B757` |
+| the 8-player co-op mod v1.12, hybrid | `23E0A32EC459463E42A5DEB6772E1C0BDD2138A5BC96D1DF5D21564F1DC48378` |
+| the original game, simultaneous | `222AAEC3DDEC7F308EB2B3AF301F3E7BB6916058716817A5EA7D9B9FEAD5D748` |
+| the 8-player co-op mod v1.12, simultaneous | `3366971302C6AFCE90E9C072D2B524FD8D790CE5650ABC9B3F44515B7C00A50B` |
 
 With another version of the 8-player mod the hash is different; it only has to be the same for everyone.
 
@@ -78,9 +78,10 @@ What to collect for each kind of problem: [human_test.md](human_test.md).
 The tests for the current build, and what to send back when one fails, are in **[human_test.md](human_test.md)**.
 
 ## Not done yet
-- **Known crash, not solved yet:** when a player who isn't first picks Retreat in the pre-battle screen of a siege
-  and then clicks the castle again, the game crashes to the desktop. Until it's fixed: don't retreat from a siege
-  during a shared turn, or save first.
+- **Fixed in 0.23, not yet confirmed in a real game:** up to 0.22, when a player who isn't first picked Retreat in the
+  pre-battle screen of a siege, the army didn't step back, and the next time that player pointed at or clicked the
+  castle the game crashed to the desktop. If it still happens with 0.23, save before retreating from a siege during a
+  shared turn and send the logs.
 - A revolution in the land of a player who isn't first doesn't play out during the shared turn: that player plays
   their next turn alone, after the others (not tested in game yet). During a battle everyone waits, as in the normal
   game (nobody keeps moving while one player fights).

@@ -81,7 +81,7 @@ $hooks = @(
 	@(0x1124ED39, 'unit panel 2'), @(0x1125458A, 'unit panel 3'), @(0x11254772, 'unit panel 4'), @(0x11143D98, 'demand surrender 1'),
 	@(0x111798B2, 'demand surrender 2'), @(0x11152230, 'ui negotiation'), @(0x111D7230, 'open negotiations'),
 	@(0x1110C516, 'hud flags 1'), @(0x11155F27, 'hud flags 2'), @(0x11156B0C, 'hud flags 3'), @(0x11155EFE, 'hud close'),
-	@(0x1110ADBD, 'hud new ui'), @(0x111DA3B6, 'hud poll'), @(0x11076A70, 'hud shade'))
+	@(0x1110ADBD, 'hud new ui'), @(0x111DA3B6, 'hud poll'), @(0x11076A70, 'hud shade'), @(0x10605176, 'retreat view'))
 # the desync fixes: this mod's on the original, the 8-player mod's own (in .s2mp) on top of it
 $desync = @(
 	@(0x100B190C, 'frame fp pin'), @(0x10227D40, 'tick fp pin'), @(0x10EE9A71, 'battle no-kick'), @(0x10EF9A87, 'report no-kick'),
@@ -94,7 +94,7 @@ $diag = [BitConverter]::ToString($fileSec).Contains([BitConverter]::ToString([Te
 "diagnostics build  : $diag"
 if ($diag) {
 	$hooks += @(@(0x105A5A96, 'diag may retreat 1'), @(0x105A5B53, 'diag may retreat 2'), @(0x105A5B79, 'diag may retreat 3'),
-		@(0x10605176, 'diag side retreat'), @(0x1060535B, 'diag spot 1'), @(0x10605554, 'diag spot 2'), @(0x1060553C, 'diag move garrison 1'),
+		@(0x1060535B, 'diag spot 1'), @(0x10605554, 'diag spot 2'), @(0x1060553C, 'diag move garrison 1'),
 		@(0x106055C0, 'diag move garrison 2'), @(0x106055E1, 'diag move'), @(0x1088393A, 'diag siege object'),
 		@(0x10883987, 'diag besieged order'), @(0x108839BE, 'diag attack order'), @(0x105C5187, 'diag in zone'),
 		@(0x105C51D0, 'diag way out'))
