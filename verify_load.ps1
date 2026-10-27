@@ -89,6 +89,15 @@ $desync = @(
 $on8p = $secs.ContainsKey('.s2mp')
 # standalone only, with no counterpart in the 8-player mod
 if (-not $on8p) { $hooks += $desync + @(@(0x10EF9AC1, 'log host kick'), @(0x10EF9AD1, 'log leave'), @(0x10703EA0, 'campaign tick pin')) }
+# a diagnostics build (install.ps1 -Diagnostics; ApplyDiagnostics in lib\Patcher.cs): its log-only hooks and 18h more data
+$diag = [BitConverter]::ToString($fileSec).Contains([BitConverter]::ToString([Text.Encoding]::ASCII.GetBytes('DIAG battle set-up')))
+"diagnostics build  : $diag"
+if ($diag) {
+	$hooks += @(@(0x105A5A96, 'diag may retreat 1'), @(0x105A5B53, 'diag may retreat 2'), @(0x105A5B79, 'diag may retreat 3'),
+		@(0x10605176, 'diag side retreat'), @(0x1060535B, 'diag spot 1'), @(0x10605554, 'diag spot 2'), @(0x1060553C, 'diag move garrison 1'),
+		@(0x106055C0, 'diag move garrison 2'), @(0x106055E1, 'diag move'), @(0x1088393A, 'diag siege object'),
+		@(0x10883987, 'diag besieged order'), @(0x108839BE, 'diag attack order'))
+}
 foreach ($hook in $hooks) {
 	$ins = Mem $hook[0] 5
 	$dest = ([int64]$hook[0] + 5 + [BitConverter]::ToInt32($ins, 1)) -band 0xFFFFFFFF
@@ -117,7 +126,7 @@ if ((Hex $endTurn) -ne '8B 81 B0 00 00 00 90 90 90 90 90 90') { $ok = $false }
 # the mod's data from DataFloor 11CB1C00 (group state, log flags, pathfinder state, the save's group, the attack
 # table, the top display's state; above the 8-player mod's, which ends at 11CB1910 in v1.11 / v1.12): mapped, inside
 # .data, zero
-$floor = 0x11CB1C00; $need = 0x290
+$floor = 0x11CB1C00; $need = $(if ($diag) { 0x2A8 } else { 0x290 })
 $dataEnd = [int64]$secs['.data'].Va + $secs['.data'].Size
 $data = Mem $floor $need
 $nonzero = @($data | Where-Object { $_ -ne 0 }).Count

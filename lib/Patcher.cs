@@ -45,6 +45,9 @@ public static class SharedTurnsPatcher {
 	// war with each other share a turn, a human at war with one of them plays alone; "simultaneous" = every human
 	// shares the turn, at war or not (GroupBuild has no war test). Sequential turns are the unmodded game.
 	public static string TurnMode = "hybrid";
+	// a diagnostics build (install.ps1 -Diagnostics, for chasing one bug with the user): extra log lines at the places
+	// named in ApplyDiagnostics; off, the build is byte-identical to one without this code
+	public static bool Diagnostics = false;
 
 	static uint U32(int off) { return BitConverter.ToUInt32(b, off); }
 	static void Put32(int off, uint v) { Array.Copy(BitConverter.GetBytes(v), 0, b, off, 4); }
@@ -723,14 +726,21 @@ public static class SharedTurnsPatcher {
 	}
 
 	static string LogHeader() {
-		return "==== Shogun 2 Shared Turns log: game started (build: " + LogBuildTag + ", turn mode: " + TurnMode + ") ====\r\n";
+		return "==== Shogun 2 Shared Turns log: game started (build: " + LogBuildTag + (Diagnostics ? ", DIAGNOSTICS BUILD" : "") +
+			", turn mode: " + TurnMode + ") ====\r\n";
+	}
+
+	// the event texts in the DLL: the diagnostics build appends its own after LogEvents
+	static IEnumerable<string> ActiveLogEvents() {
+		foreach (var e in LogEvents) yield return e;
+		if (Diagnostics) foreach (var e in DiagLogEvents) yield return e;
 	}
 
 	// Log's data, after all other code in the section; fills in the "lea reg,[ebx+item]" offsets
 	static void EmitLogData(Asm a) {
 		var at = new Dictionary<string, uint>();
 		at["events"] = a.Here;
-		foreach (var e in LogEvents) { a.Bytes.AddRange(Encoding.ASCII.GetBytes(e)); a.Raw(0x00); }
+		foreach (var e in ActiveLogEvents()) { a.Bytes.AddRange(Encoding.ASCII.GetBytes(e)); a.Raw(0x00); }
 		at["file"] = a.Here;
 		a.Bytes.AddRange(Encoding.Unicode.GetBytes("shared_turns.log\0"));
 		at["old"] = a.Here;
@@ -4042,9 +4052,15 @@ public static class SharedTurnsPatcher {
 
 		// campaign constructors FUN_106463e0 (edi = campaign) and FUN_10649180 (load, ebx = campaign)
 		uint resetNew = Sym("CampaignReset", EmitCampaignReset(s, zeroGroup, 0x87, 0x00, 0x10646DD3, log, LogResetNew));
+		uint resetLoad = Sym("CampaignReset", EmitCampaignReset(s, zeroGroup, 0x83, 0x01, 0x10649B3C, log, LogResetLoad));
+		if (Diagnostics) {
+			// the diagnostics build installs its exit catcher and exception logger when a campaign is built
+			uint diagInstall = EmitDiagRuntime(s, log);
+			resetNew = Sym("DiagReset", EmitDiagReset(s, diagInstall, resetNew));
+			resetLoad = Sym("DiagReset", EmitDiagReset(s, diagInstall, resetLoad));
+		}
 		ExpectBytes(0x10646DCA, 0x66, 0xC7, 0x87, 0x1C, 0x15, 0x00, 0x00, 0x00, 0x00);
 		PutJmp(0x10646DCA, resetNew, 9);
-		uint resetLoad = Sym("CampaignReset", EmitCampaignReset(s, zeroGroup, 0x83, 0x01, 0x10649B3C, log, LogResetLoad));
 		ExpectBytes(0x10649B33, 0x66, 0xC7, 0x83, 0x1C, 0x15, 0x00, 0x00, 0x01, 0x00);
 		PutJmp(0x10649B33, resetLoad, 9);
 		// group start / end, picker
@@ -4205,6 +4221,378 @@ public static class SharedTurnsPatcher {
 
 		// UI only: the clans of a shared turn at the top of the screen, on every PC, grey once they have ended
 		ApplyHudFlags(s, log);
+	}
+
+	// ---- diagnostics build (install.ps1 -Diagnostics; off in every normal build) --------------------------------
+	// For the crash after a member's retreat from a siege (NOTES "Siege: a member retreats, then clicks the castle
+	// again"): the game closes itself on every PC with no Windows error and no dump, so a deliberate exit (one of ~150
+	// TerminateProcess calls) or an exception the engine catches itself. Log only, nothing changes for the game:
+	//  - the battle's per-army "may retreat" flag as the battle is built (FUN_105c5700 in FUN_105a5960, +28h of the
+	//    army entry; the retreat step FUN_10604260 only moves an army whose flag is set: FUN_105c4c20);
+	//  - the retreat step's decisions (state 9 with +C3h): may the attacker's side retreat, the two searches for a
+	//    retreat spot (FUN_105b7d10, FUN_105c5130), the retreat move (FUN_108bc2e0 from a garrison, FUN_10903190);
+	//  - CCQ_CHARACTER_ATTACK_GARRISON_RESIDENCE FUN_10883870: the army's siege object (FUN_106a0cb0) and which order it
+	//    sets up (FUN_1085ada0 for the castle it besieges, FUN_1085ab90 a new attack);
+	//  - at the first campaign of the process: TerminateProcess / ExitProcess in the import table point to stubs that
+	//    log the exit, its caller and the candidate return addresses on the stack, then go on to Windows; a vectored
+	//    exception handler logs error-severity exceptions (code, address, stack) before anything else sees them and
+	//    always passes them on. Addresses inside the DLL are logged at image base 10000000h, decimal.
+	static readonly string[] DiagLogEvents = {
+		"DIAG battle set-up: may the army of %f retreat? %b",                                       // 53
+		"DIAG retreat step: may an army of the attacking side retreat? %b (battle interrupted a move %b)",   // 54
+		"DIAG retreat step: retreat spot found (first search) %b",                                  // 55
+		"DIAG retreat step: retreat spot found (second search) %b",                                 // 56
+		"DIAG retreat step: retreat move from a garrison issued %b",                                // 57
+		"DIAG retreat step: retreat move issued %b",                                                // 58
+		"DIAG attack on a settlement: the army's siege object %d (0 = none)",                       // 59
+		"DIAG attack on a settlement: order on the castle it besieges set up %b",                   // 60
+		"DIAG attack on a settlement: attack order set up %b",                                      // 61
+		"!EXIT the game ends itself: %d (1 TerminateProcess, 2 ExitProcess), exit code %d",         // 62
+		"!EXIT called from %d, DLL loaded at %d",                                                   // 63
+		"!EXIT stack %d %d",                                                                        // 64
+		"!EXCEPTION code %d at %d",                                                                 // 65
+		"!EXCEPTION access (%d: 0 read, 1 write, 8 execute) to %d",                                 // 66
+		"!EXCEPTION stack %d %d",                                                                   // 67
+		"!DIAG exit catcher installed %b, exception logger installed %b",                           // 68
+	};
+	const int LogDiagMayRetreat = 53, LogDiagSideRetreat = 54, LogDiagSpot1 = 55, LogDiagSpot2 = 56,
+		LogDiagMoveGarrison = 57, LogDiagMove = 58, LogDiagSiegeObject = 59, LogDiagBesiegedOrder = 60,
+		LogDiagAttackOrder = 61, LogDiagExit = 62, LogDiagExitFrom = 63, LogDiagExitStack = 64, LogDiagException = 65,
+		LogDiagAccess = 66, LogDiagExceptionStack = 67, LogDiagInstalled = 68;
+	const uint DiagVa = HudLastDword + 4;      // +00 installed, +04 the DLL's runtime base, +08 / +0C the original
+	                                           // TerminateProcess / ExitProcess, +10 exceptions logged, +14 VirtualProtect's old
+	                                           // protection
+	const uint DiagLastDword = DiagVa + 0x14;
+	const int DiagMaxExceptions = 60;
+	const uint TerminateProcessIat = 0x115A124C;
+	const uint ExitProcessIat = 0x115A1310;
+	const uint GetModuleHandleWIat = 0x115A1100;
+	const uint GetProcAddressIat = 0x115A1190;
+	const uint DiagTextRva = 0x015A1000;       // candidate return addresses: [base+1000h, base+DiagTextRva) (.text, also
+	                                           // the 8-player mod's slack) or this mod's section
+	static uint diagSectionRva;
+
+	// push the address of the bytes that follow, then go on after them: call over / <bytes> / over:
+	static void EmitPushInline(Asm a, byte[] bytes) {
+		a.Raw(0xE8); D32(a, bytes.Length);                // call over                (pushes the bytes' address)
+		a.Raw(bytes);
+	}
+
+	static uint EmitDiagToStatic(Asm a) {
+		// eax = an address, ecx = the DLL's runtime base -> eax = the same address at image base 10000000h (unchanged
+		// outside the image); changes only eax and the flags
+		uint at = a.Here;
+		a.Raw(0x52);                                      // push edx
+		a.Raw(0x8B, 0xD0);                                // mov edx,eax
+		a.Raw(0x2B, 0xD1);                                // sub edx,ecx
+		a.Raw(0x81, 0xFA); D32(a, 0x02000000);            // cmp edx,2000000h
+		a.J8(0x73, "out");                                // jae out                 (not in the image)
+		a.Raw(0x8D, 0x82); D32(a, ImageBase);             // lea eax,[edx+10000000h]
+		a.Mark("out");
+		a.Raw(0x5A);                                      // pop edx
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitDiagStack(Asm a, uint log) {
+		// stdcall(start, base, id) ret 0Ch, keeps every register: logs (two per line, event id) up to 12 dwords on this
+		// thread's stack from start (at most 400h bytes, never past its base fs:[4]) that look like return addresses:
+		// inside .text or this mod's section, at image base 10000000h
+		uint at = a.Here;
+		a.Raw(0x60);                                      // pushad                  (start +24h, base +28h, id +2Ch)
+		a.Raw(0x8B, 0x74, 0x24, 0x24);                    // mov esi,[esp+24h]       (start)
+		a.Raw(0x8B, 0x6C, 0x24, 0x28);                    // mov ebp,[esp+28h]       (base)
+		a.Raw(0xFC);                                      // cld                     (lodsd forwards)
+		a.Raw(0x64, 0xA1, 0x04, 0x00, 0x00, 0x00);        // mov eax,fs:[4]          (the stack's base)
+		a.Raw(0x8D, 0xBE, 0x00, 0x04, 0x00, 0x00);        // lea edi,[esi+400h]
+		a.Raw(0x3B, 0xF8);                                // cmp edi,eax
+		a.J8(0x76, "limit");                              // jbe limit
+		a.Raw(0x8B, 0xF8);                                // mov edi,eax
+		a.Mark("limit");
+		a.Raw(0x33, 0xDB);                                // xor ebx,ebx             (a candidate waiting for its pair)
+		a.Raw(0x33, 0xD2);                                // xor edx,edx             (candidates found)
+		a.Mark("loop");
+		a.Raw(0x3B, 0xF7);                                // cmp esi,edi
+		a.J8(0x73, "flush");                              // jae flush
+		a.Raw(0xAD);                                      // lodsd
+		a.Raw(0x8B, 0xC8);                                // mov ecx,eax
+		a.Raw(0x2B, 0xCD);                                // sub ecx,ebp             (offset in the image)
+		a.Raw(0x81, 0xF9); D32(a, 0x1000);                // cmp ecx,1000h
+		a.J8(0x72, "loop");                               // jb loop
+		a.Raw(0x81, 0xF9); D32(a, DiagTextRva);           // cmp ecx,DiagTextRva
+		a.J8(0x72, "hit");                                // jb hit                  (.text)
+		a.Raw(0x81, 0xF9); D32(a, diagSectionRva);        // cmp ecx,this section
+		a.J8(0x72, "loop");                               // jb loop
+		a.Raw(0x81, 0xF9); D32(a, diagSectionRva + 0x20000);   // cmp ecx,its end
+		a.J8(0x73, "loop");                               // jae loop
+		a.Mark("hit");
+		a.Raw(0x81, 0xC1); D32(a, ImageBase);             // add ecx,10000000h
+		a.Raw(0x85, 0xDB);                                // test ebx,ebx
+		a.J8(0x75, "pair");                               // jnz pair
+		a.Raw(0x8B, 0xD9);                                // mov ebx,ecx
+		a.J8(0xEB, "next");                               // jmp next
+		a.Mark("pair");
+		a.Raw(0x51);                                      // push ecx                (a2)
+		a.Raw(0x53);                                      // push ebx                (a1)
+		a.Raw(0xFF, 0x74, 0x24, 0x34);                    // push dword ptr [esp+34h] (id)
+		a.Call(log);
+		a.Raw(0x33, 0xDB);                                // xor ebx,ebx
+		a.Mark("next");
+		a.Raw(0x42);                                      // inc edx
+		a.Raw(0x83, 0xFA, 0x0C);                          // cmp edx,12
+		a.J8(0x72, "loop");                               // jb loop
+		a.Mark("flush");
+		a.Raw(0x85, 0xDB);                                // test ebx,ebx
+		a.J8(0x74, "done");                               // jz done
+		a.Raw(0x6A, 0x00);                                // push 0                  (a2)
+		a.Raw(0x53);                                      // push ebx                (a1)
+		a.Raw(0xFF, 0x74, 0x24, 0x34);                    // push dword ptr [esp+34h] (id)
+		a.Call(log);
+		a.Mark("done");
+		a.Raw(0x61);                                      // popad
+		a.Raw(0xC2, 0x0C, 0x00);                          // ret 0Ch
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitDiagExitStub(Asm a, uint log, uint toStatic, uint stack, int kind) {
+		// stands in for TerminateProcess (kind 1: stdcall(process, code)) or ExitProcess (kind 2: stdcall(code)) in the
+		// import table: logs the exit, its caller and the stack, then goes on to the original with the stack as on entry
+		uint at = a.Here;
+		a.Raw(0x9C);                                      // pushfd
+		a.Raw(0x60);                                      // pushad                  (return address at +24h, arguments from +28h)
+		EmitGroupPtr(a, 7, DiagVa);                       // edi = &diag
+		a.Raw(0x8B, 0x4F, 0x04);                          // mov ecx,[edi+4]         (base)
+		a.Raw(0xFF, 0x74, 0x24, (byte)(kind == 1 ? 0x2C : 0x28));   // push dword ptr [esp+2Ch / 28h] (exit code)
+		a.Raw(0x6A, (byte)kind);                          // push kind
+		CallLog(a, log, LogDiagExit);
+		a.Raw(0x51);                                      // push ecx                (base)
+		a.Raw(0x8B, 0x44, 0x24, 0x28);                    // mov eax,[esp+28h]       (the caller, after the push)
+		a.Call(toStatic);
+		a.Raw(0x50);                                      // push eax
+		CallLog(a, log, LogDiagExitFrom);
+		a.Raw(0x8D, 0x44, 0x24, 0x28);                    // lea eax,[esp+28h]       (the caller's stack)
+		a.Raw(0x6A, (byte)LogDiagExitStack);              // push id
+		a.Raw(0x51);                                      // push ecx                (base)
+		a.Raw(0x50);                                      // push eax                (start)
+		a.Call(stack);
+		a.Raw(0x61);                                      // popad
+		a.Raw(0x9D);                                      // popfd
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0xE8, 0x00, 0x00, 0x00, 0x00);              // call $+5
+		uint popAt = a.Here;
+		a.Raw(0x58);                                      // pop eax
+		a.Raw(0x8B, 0x80); D32(a, DiagVa + (uint)(kind == 1 ? 8 : 0x0C) - popAt);   // mov eax,[eax+original-popAt]
+		a.Raw(0x87, 0x04, 0x24);                          // xchg eax,[esp]          (eax back, the original on the stack)
+		a.Raw(0xC3);                                      // ret                     (to the original)
+		return at;
+	}
+
+	static uint EmitDiagVeh(Asm a, uint log, uint toStatic, uint stack) {
+		// vectored exception handler stdcall(EXCEPTION_POINTERS*) ret 4: logs exceptions of error severity (code with
+		// both top bits set: access violations, C++ exceptions, ...; not stack overflows, no room to log then) up to
+		// DiagMaxExceptions per process; returns EXCEPTION_CONTINUE_SEARCH (0) always
+		uint at = a.Here;
+		a.Raw(0x60);                                      // pushad                  (pointers at +24h)
+		a.Raw(0x8B, 0x74, 0x24, 0x24);                    // mov esi,[esp+24h]       (EXCEPTION_POINTERS)
+		a.Raw(0x8B, 0x1E);                                // mov ebx,[esi]           (ExceptionRecord)
+		a.Raw(0x8B, 0x13);                                // mov edx,[ebx]           (code)
+		a.Raw(0x8B, 0xC2);                                // mov eax,edx
+		a.Raw(0x25); D32(a, 0xC0000000);                  // and eax,0C0000000h
+		a.Raw(0x3D); D32(a, 0xC0000000);                  // cmp eax,0C0000000h
+		a.J8(0x75, "out");                                // jne out
+		a.Raw(0x81, 0xFA); D32(a, 0xC00000FD);            // cmp edx,0C00000FDh      (stack overflow)
+		a.J8(0x74, "out");                                // je out
+		EmitGroupPtr(a, 7, DiagVa);                       // edi = &diag
+		a.Raw(0x83, 0x7F, 0x10, (byte)DiagMaxExceptions); // cmp dword ptr [edi+10h],DiagMaxExceptions
+		a.J8(0x73, "out");                                // jae out
+		a.Raw(0xFF, 0x47, 0x10);                          // inc dword ptr [edi+10h]
+		a.Raw(0x8B, 0x4F, 0x04);                          // mov ecx,[edi+4]         (base)
+		a.Raw(0x8B, 0x43, 0x0C);                          // mov eax,[ebx+0Ch]       (ExceptionAddress)
+		a.Call(toStatic);
+		a.Raw(0x50);                                      // push eax                (a2)
+		a.Raw(0x52);                                      // push edx                (a1: code)
+		CallLog(a, log, LogDiagException);
+		a.Raw(0x81, 0xFA); D32(a, 0xC0000005);            // cmp edx,0C0000005h      (access violation)
+		a.J8(0x75, "stack");                              // jne stack
+		a.Raw(0x83, 0x7B, 0x10, 0x02);                    // cmp dword ptr [ebx+10h],2 (NumberParameters)
+		a.J8(0x72, "stack");                              // jb stack
+		a.Raw(0xFF, 0x73, 0x18);                          // push dword ptr [ebx+18h] (the address)
+		a.Raw(0xFF, 0x73, 0x14);                          // push dword ptr [ebx+14h] (read / write / execute)
+		CallLog(a, log, LogDiagAccess);
+		a.Mark("stack");
+		a.Raw(0x8B, 0x46, 0x04);                          // mov eax,[esi+4]         (ContextRecord)
+		a.Raw(0x8B, 0x80, 0xC4, 0x00, 0x00, 0x00);        // mov eax,[eax+0C4h]      (its Esp)
+		a.Raw(0x6A, (byte)LogDiagExceptionStack);         // push id
+		a.Raw(0x51);                                      // push ecx                (base)
+		a.Raw(0x50);                                      // push eax                (start)
+		a.Call(stack);
+		a.Mark("out");
+		a.Raw(0x61);                                      // popad
+		a.Raw(0x33, 0xC0);                                // xor eax,eax             (EXCEPTION_CONTINUE_SEARCH)
+		a.Raw(0xC2, 0x04, 0x00);                          // ret 4
+		a.Resolve();
+		return at;
+	}
+
+	static void EmitDiagSwapSlot(Asm a, uint iat, uint stub, int saveOff, string done) {
+		// inside DiagInstall (ebx = popAt there, edi = &diag, ebp = VirtualProtect): the import slot iat -> stub, its
+		// original kept at [edi+saveOff]; esi kept; al = 1 if done. done: a label of its own (DiagInstall resolves)
+		a.Raw(0x8D, 0x8B); D32(a, iat - diagInstallPopAt);  // lea ecx,[ebx+iat-popAt]
+		a.Raw(0x8B, 0x01);                                // mov eax,[ecx]
+		a.Raw(0x89, 0x47, (byte)saveOff);                 // mov [edi+saveOff],eax
+		a.Raw(0x51);                                      // push ecx                (kept)
+		a.Raw(0x8D, 0x47, 0x14);                          // lea eax,[edi+14h]       (old protection)
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0x6A, 0x04);                                // push 4                  (PAGE_READWRITE)
+		a.Raw(0x6A, 0x04);                                // push 4                  (size)
+		a.Raw(0x51);                                      // push ecx
+		a.Raw(0xFF, 0xD5);                                // call ebp                (VirtualProtect)
+		a.Raw(0x59);                                      // pop ecx
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, done);                                 // jz done                 (al = 0)
+		a.Raw(0x8D, 0x93); D32(a, stub - diagInstallPopAt);   // lea edx,[ebx+stub-popAt]
+		a.Raw(0x89, 0x11);                                // mov [ecx],edx
+		a.Raw(0x8D, 0x47, 0x14);                          // lea eax,[edi+14h]
+		a.Raw(0x50);                                      // push eax
+		a.Raw(0xFF, 0x77, 0x14);                          // push dword ptr [edi+14h] (back to the old protection)
+		a.Raw(0x6A, 0x04);                                // push 4
+		a.Raw(0x51);                                      // push ecx
+		a.Raw(0xFF, 0xD5);                                // call ebp
+		a.Raw(0xB0, 0x01);                                // mov al,1
+		a.Mark(done);
+	}
+	static uint diagInstallPopAt;
+
+	static uint EmitDiagRuntime(Asm a, uint log) {
+		// the exit stubs and the exception handler, then DiagInstall (returned): once per process, keeps every
+		// register and the flags
+		uint toStatic = Sym("DiagToStatic", EmitDiagToStatic(a));
+		uint stack = Sym("DiagStack", EmitDiagStack(a, log));
+		uint termStub = Sym("DiagTerminateStub", EmitDiagExitStub(a, log, toStatic, stack, 1));
+		uint exitStub = Sym("DiagExitStub", EmitDiagExitStub(a, log, toStatic, stack, 2));
+		uint veh = Sym("DiagVeh", EmitDiagVeh(a, log, toStatic, stack));
+		uint at = Sym("DiagInstall", a.Here);
+		a.Raw(0x9C);                                      // pushfd
+		a.Raw(0x60);                                      // pushad
+		a.Raw(0xE8, 0x00, 0x00, 0x00, 0x00);              // call $+5
+		diagInstallPopAt = a.Here;
+		a.Raw(0x5B);                                      // pop ebx
+		a.Raw(0x8D, 0xBB); D32(a, DiagVa - diagInstallPopAt);   // lea edi,[ebx+diag-popAt]
+		a.Raw(0x83, 0x3F, 0x00);                          // cmp dword ptr [edi],0
+		a.J32("out", 0x0F, 0x85);                         // jne out                 (done before)
+		a.Raw(0xC7, 0x07, 0x01, 0x00, 0x00, 0x00);        // mov dword ptr [edi],1
+		a.Raw(0x8B, 0xC3);                                // mov eax,ebx
+		a.Raw(0x2D); D32(a, diagInstallPopAt - ImageBase);   // sub eax,popAt-10000000h
+		a.Raw(0x89, 0x47, 0x04);                          // mov [edi+4],eax         (base)
+		a.Raw(0x6A, 0x00);                                // push 0                  (logger installed: filled below)
+		a.Raw(0x6A, 0x00);                                // push 0                  (catcher installed)
+		EmitPushInline(a, Encoding.Unicode.GetBytes("kernel32.dll\0"));
+		a.Raw(0xFF, 0x93); D32(a, GetModuleHandleWIat - diagInstallPopAt);   // call [ebx+GetModuleHandleW]
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J32("log", 0x0F, 0x84);                         // jz log
+		a.Raw(0x8B, 0xF0);                                // mov esi,eax             (kernel32)
+		EmitPushInline(a, Encoding.ASCII.GetBytes("VirtualProtect\0"));
+		a.Raw(0x56);                                      // push esi
+		a.Raw(0xFF, 0x93); D32(a, GetProcAddressIat - diagInstallPopAt);     // call [ebx+GetProcAddress]
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J32("veh", 0x0F, 0x84);                         // jz veh
+		a.Raw(0x8B, 0xE8);                                // mov ebp,eax             (VirtualProtect)
+		EmitDiagSwapSlot(a, TerminateProcessIat, termStub, 0x08, "swap1");
+		a.Raw(0x0F, 0xB6, 0xC0);                          // movzx eax,al
+		a.Raw(0x89, 0x04, 0x24);                          // mov [esp],eax           (catcher installed)
+		EmitDiagSwapSlot(a, ExitProcessIat, exitStub, 0x0C, "swap2");
+		a.Raw(0x20, 0x04, 0x24);                          // and [esp],al
+		a.Mark("veh");
+		EmitPushInline(a, Encoding.ASCII.GetBytes("AddVectoredExceptionHandler\0"));
+		a.Raw(0x56);                                      // push esi
+		a.Raw(0xFF, 0x93); D32(a, GetProcAddressIat - diagInstallPopAt);     // call [ebx+GetProcAddress]
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "log");                                // jz log
+		a.Raw(0x8D, 0x93); D32(a, veh - diagInstallPopAt);   // lea edx,[ebx+veh-popAt]
+		a.Raw(0x52);                                      // push edx
+		a.Raw(0x6A, 0x01);                                // push 1                  (first in the chain)
+		a.Raw(0xFF, 0xD0);                                // call eax
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.Raw(0x0F, 0x95, 0x44, 0x24, 0x04);              // setne byte ptr [esp+4]  (logger installed)
+		a.Mark("log");
+		CallLog(a, log, LogDiagInstalled);               // a1 = catcher, a2 = logger (pushed above)
+		a.Mark("out");
+		a.Raw(0x61);                                      // popad
+		a.Raw(0x9D);                                      // popfd
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
+	static uint EmitDiagReset(Asm a, uint install, uint reset) {
+		// jumped to by a campaign constructor in place of the campaign reset: install, then the reset as before
+		uint at = a.Here;
+		a.Call(install);
+		a.Jmp(reset);
+		return at;
+	}
+
+	static uint EmitDiagMayRetreat(Asm a, uint log) {
+		// replaces "call FUN_105c5700" (thiscall(army entry; battle) ret 4 -> al: may this army retreat) in FUN_105a5960
+		uint at = a.Here;
+		a.Raw(0x51);                                      // push ecx                (the army entry)
+		a.Raw(0xFF, 0x74, 0x24, 0x08);                    // push dword ptr [esp+8]  (the battle)
+		a.Call(0x105C5700);
+		a.Raw(0x59);                                      // pop ecx
+		a.Raw(0x50);                                      // push eax                (a2: may retreat)
+		a.Raw(0xFF, 0x71, 0x04);                          // push dword ptr [ecx+4]  (a1: the army's faction)
+		CallLog(a, log, LogDiagMayRetreat);
+		a.Raw(0xC2, 0x04, 0x00);                          // ret 4
+		return at;
+	}
+
+	static uint EmitDiagSideRetreat(Asm a, uint log) {
+		// replaces "call FUN_105c4c20" (thiscall(side) -> al: may one of its armies retreat) at 10605176, the retreat
+		// step for the attacker; ebx = the battle (kept by the callee), ecx is reloaded after the call
+		uint at = a.Here;
+		a.Call(0x105C4C20);
+		a.Raw(0x0F, 0xB6, 0x8B, 0xC2, 0x00, 0x00, 0x00);  // movzx ecx,byte ptr [ebx+0C2h]
+		a.Raw(0x51);                                      // push ecx                (a2: the battle interrupted a move)
+		a.Raw(0x50);                                      // push eax                (a1: may retreat)
+		CallLog(a, log, LogDiagSideRetreat);
+		a.Raw(0xC3);                                      // ret
+		return at;
+	}
+
+	static uint EmitDiagCallResult(Asm a, uint log, uint target, int args, bool cdecl, int id) {
+		// replaces "call target" with args stack arguments (thiscall/stdcall: the callee pops them; cdecl: the caller):
+		// the same call with ecx and copies of the arguments, then logs eax (a1), returns its result
+		uint at = a.Here;
+		for (int i = 0; i < args; i++) a.Raw(0xFF, 0x74, 0x24, (byte)(4 * args));   // push dword ptr [esp+4*args]
+		a.Call(target);
+		if (cdecl && args > 0) a.Raw(0x83, 0xC4, (byte)(4 * args));   // add esp,4*args
+		a.Raw(0x6A, 0x00);                                // push 0                  (a2)
+		a.Raw(0x50);                                      // push eax                (a1: the result)
+		CallLog(a, log, id);
+		if (cdecl || args == 0) a.Raw(0xC3);              // ret
+		else a.Raw(0xC2, (byte)(4 * args), 0x00);         // ret 4*args
+		return at;
+	}
+
+	static void ApplyDiagnostics(Asm s, uint log) {
+		ReserveDataDword(DiagLastDword);
+		// the battle's per-army "may retreat", as the battle is built
+		uint mayRetreat = Sym("DiagMayRetreat", EmitDiagMayRetreat(s, log));
+		foreach (uint site in new uint[] { 0x105A5A96, 0x105A5B53, 0x105A5B79 }) RedirectCall(site, 0x105C5700, mayRetreat);
+		// the retreat step (state 9 with +C3h) for the attacker
+		RedirectCall(0x10605176, 0x105C4C20, Sym("DiagSideRetreat", EmitDiagSideRetreat(s, log)));
+		RedirectCall(0x1060535B, 0x105B7D10, Sym("DiagSpot1", EmitDiagCallResult(s, log, 0x105B7D10, 4, true, LogDiagSpot1)));
+		RedirectCall(0x10605554, 0x105C5130, Sym("DiagSpot2", EmitDiagCallResult(s, log, 0x105C5130, 2, true, LogDiagSpot2)));
+		uint moveGarrison = Sym("DiagMoveGarrison", EmitDiagCallResult(s, log, 0x108BC2E0, 6, false, LogDiagMoveGarrison));
+		RedirectCall(0x1060553C, 0x108BC2E0, moveGarrison);
+		RedirectCall(0x106055C0, 0x108BC2E0, moveGarrison);
+		RedirectCall(0x106055E1, 0x10903190, Sym("DiagMove", EmitDiagCallResult(s, log, 0x10903190, 4, false, LogDiagMove)));
+		// CCQ_CHARACTER_ATTACK_GARRISON_RESIDENCE FUN_10883870
+		RedirectCall(0x1088393A, 0x106A0CB0, Sym("DiagSiegeObject", EmitDiagCallResult(s, log, 0x106A0CB0, 0, false, LogDiagSiegeObject)));
+		RedirectCall(0x10883987, 0x1085ADA0, Sym("DiagBesiegedOrder", EmitDiagCallResult(s, log, 0x1085ADA0, 3, false, LogDiagBesiegedOrder)));
+		RedirectCall(0x108839BE, 0x1085AB90, Sym("DiagAttackOrder", EmitDiagCallResult(s, log, 0x1085AB90, 6, false, LogDiagAttackOrder)));
 	}
 
 	// ---- desync fixes (standalone builds only) -------------------------------------------------------------------
@@ -4498,9 +4886,11 @@ public static class SharedTurnsPatcher {
 		if (dataEnd > DataFloor) throw new Exception(string.Format("the input's .data reaches {0:X8}, past this mod's data at {1:X8}", dataEnd, DataFloor));
 
 		var s = new Asm { Va = ImageBase + U32(optOff + 56) };   // the new section goes right after the last one
+		diagSectionRva = s.Va - ImageBase;
 		hudDataFixes = new List<DataFix>();
 		uint log = Sym("Log", EmitLog(s));
 		ApplyGroupTurns(s, log);
+		if (Diagnostics) ApplyDiagnostics(s, log);
 		if (!on8p) ApplyDesyncFixes(s, log);   // the 8-player mod has its own at these sites
 		Sym("LogData", s.Here);
 		EmitLogData(s);
@@ -4511,6 +4901,7 @@ public static class SharedTurnsPatcher {
 		Sym("DataFloor", DataFloor);   // for re\build\compat.py: this mod's .data starts here
 
 		File.WriteAllBytes(outPath, b);
-		return string.Format("patched ({0}, {5} turns): {1} at {2:X8}, {3} bytes; output sha256 {4}", BaseName, SectionName, s.Va, s.Bytes.Count, Sha(b), TurnMode);
+		return string.Format("patched ({0}, {5} turns{6}): {1} at {2:X8}, {3} bytes; output sha256 {4}", BaseName, SectionName, s.Va, s.Bytes.Count, Sha(b), TurnMode,
+			Diagnostics ? ", DIAGNOSTICS BUILD" : "");
 	}
 }
