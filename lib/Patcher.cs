@@ -255,7 +255,7 @@ public static class SharedTurnsPatcher {
 	// Log(id, a1, a2) is stdcall (ret 0Ch) and keeps every register and the flags, so it can be called anywhere;
 	// %f in the event text prints a faction's key ([faction+51Ch] -> engine string: +0 length, +8 wchar_t*; 0 when
 	// dead, FUN_105ecef0), %d a number, %b a bool's low byte, taking a1 then a2.
-	const string LogBuildTag = "shared turns 0.24 (milestones 1, 2 and 3, milestone 4 part 1, turn modes hybrid / simultaneous, no battle with a target that moved away, members handed to the AI end, the clans of a shared turn at the top of the screen, a member's retreat from a siege, a member disbands only its own agents, 8-player mod v1.13, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume / hud log, crash log)";
+	const string LogBuildTag = "shared turns 0.25 (milestones 1, 2 and 3, milestone 4 part 1, turn modes hybrid / simultaneous, no battle with a target that moved away, members handed to the AI end, the clans of a shared turn at the top of the screen, a member's retreat from a siege, a member disbands only its own agents, a member's order held by a popup with its own pathfinder, no crash at a settlement without a map node, 8-player mod v1.13, fixes 2-6, 4b and 6b, recruitment cards for members, the group kept in the save, desync fixes, battle / access / pending / diplomacy / attack / message / resume / hud / path log, crash log with 48 stack entries)";
 	const uint UiGlobal = 0x11BC8FE4;          // ui; [ui+A98h] model, [model+8] campaign, [model+B0h] local faction
 	const uint LogOpenedVa = DataFloor + 0x54;      // 1 once this process has moved the previous log to .old
 	const uint LogCloseWaitVa = DataFloor + 0x58;   // 1 once "lead's end turn waits" is logged for the running group
@@ -326,6 +326,9 @@ public static class SharedTurnsPatcher {
 		"!EXCEPTION access (%d: 0 read, 1 write, 8 execute) to %d",         // 55
 		"!EXCEPTION stack %d %d",                                           // 56
 		"!CRASHLOG exception logger installed %b",                          // 57
+		// 58, 59: the route search's missing-node guard (NodeGuard, build 0.25; at most NodeGuardMaxLogged per process)
+		"PATH a route search found no map node at a settlement next to the route (search %d, check %d: 1 at the start, 2 along the route): that step is skipped instead of the game's crash (mod)",   // 58
+		"PATH that settlement's map position: %d, %d",                     // 59
 	};
 	const int LogResetNew = 0, LogResetLoad = 1, LogStart = 2, LogSolo = 3, LogLoad = 4, LogEndVanilla = 5,
 		LogEndAlready = 6, LogEndBankrupt = 7, LogEndLocked = 8, LogEndMarked = 9, LogLatch = 10, LogDrop = 11,
@@ -337,7 +340,8 @@ public static class SharedTurnsPatcher {
 		LogNegotiation = 38, LogWar = 39, LogAttackOk = 40, LogAttackRefused = 41, LogLoadSave = 42, LogMessageShow = 43,
 		LogMessageHide = 44, LogNegotiationDropped = 45, LogNegotiationUiBlocked = 46, LogResumeMembers = 47,
 		LogLoadGroup = 48, LogRevolt = 49, LogSaveGroup = 50, LogAttackMoved = 51, LogHud = 52, LogRetreatView = 53,
-		LogException = 54, LogExceptionAccess = 55, LogExceptionStack = 56, LogCrashLogInstalled = 57;
+		LogException = 54, LogExceptionAccess = 55, LogExceptionStack = 56, LogCrashLogInstalled = 57,
+		LogNodeSkipped = 58, LogNodeSkippedAt = 59;
 	// Log's stack frame (ebp = esp after "sub esp,LogFrame"; pushfd + pushad + return address sit above it)
 	const int LogLine = 0x000, LogPath = 0x400, LogOld = 0x810, LogTime = 0xC20, LogWritten = 0xC30,
 		LogCamp = 0xC34, LogWorld = 0xC38, LogModel = 0xC3C, LogArgP = 0xC40, LogIdx = 0xC44, LogLineEnd = 0xC48,
@@ -3315,6 +3319,63 @@ public static class SharedTurnsPatcher {
 		return at;
 	}
 
+	static uint EmitPopApply(Asm a, uint pfFocusFor, uint pfRestore) {
+		// replaces "mov eax,[edi] / call [eax+4]" at 105B60F1 (5 bytes) in the pop FUN_105b60e0: the head node's apply.
+		// For the four popup nodes (move options 115FCFB8, the attack node 115FD02C, its siblings 115FD488 / 115FD4F4;
+		// +8 = the acting character, as in ForeignPending) the apply runs with the pathfinder set up for that character's
+		// clan (PfFocusFor: a non-lead member while the lead is current, else the turn's set-up), then back (PfRestore).
+		// Vanilla shows these popups only to the current clan, whose set-up is in force when they close; a member's held
+		// order was re-checked with the lead's (the move-options apply FUN_105b6b40: FUN_1078fad0 / FUN_1078f780 /
+		// FUN_10791560, then the order), so after Declare war the member's move or landing was dropped (the lead isn't
+		// at war with that clan). The campaign is [[char+160h]+8], as FUN_105b6b40 reads it.
+		// entry: ecx = edi = the node (unlinked from the list), esi = the holder; 105B60F6 reloads eax and ecx, so eax,
+		// ecx and edx are dead (the replaced call clobbered them too). Keeps ebx, esi, edi, ebp.
+		uint at = a.Here;
+		a.Raw(0x53);                                      // push ebx
+		a.Raw(0x55);                                      // push ebp
+		a.Raw(0x8B, 0xE9);                                // mov ebp,ecx             (node)
+		a.Raw(0x33, 0xDB);                                // xor ebx,ebx             (campaign to restore: none yet)
+		EmitGroupPtr(a, 0, 0x115FCFB8);                   // eax = the move-options vtable
+		a.Raw(0x8B, 0x55, 0x00);                          // mov edx,[ebp]           (node's vtable)
+		a.Raw(0x2B, 0xD0);                                // sub edx,eax
+		a.J8(0x74, "popup");                              // je popup                (move options)
+		a.Raw(0x83, 0xFA, (byte)(0x115FD02Cu - 0x115FCFB8u));   // cmp edx,74h        (attack on a character)
+		a.J8(0x74, "popup");                              // je popup
+		a.Raw(0x81, 0xFA); D32(a, 0x115FD488u - 0x115FCFB8u);   // cmp edx,4D0h       (the character node 115FD488)
+		a.J8(0x74, "popup");                              // je popup
+		a.Raw(0x81, 0xFA); D32(a, 0x115FD4F4u - 0x115FCFB8u);   // cmp edx,53Ch       (the object node 115FD4F4)
+		a.J8(0x75, "apply");                              // jne apply
+		a.Mark("popup");
+		a.Raw(0x8B, 0x4D, 0x08);                          // mov ecx,[ebp+8]         (the acting character)
+		a.Raw(0x85, 0xC9);                                // test ecx,ecx
+		a.J8(0x74, "apply");                              // jz apply
+		a.Raw(0x8B, 0x81, 0x60, 0x01, 0x00, 0x00);        // mov eax,[ecx+160h]      (model)
+		a.Raw(0x85, 0xC0);                                // test eax,eax
+		a.J8(0x74, "apply");                              // jz apply
+		a.Raw(0x8B, 0x58, 0x08);                          // mov ebx,[eax+8]         (campaign)
+		a.Raw(0x85, 0xDB);                                // test ebx,ebx
+		a.J8(0x74, "apply");                              // jz apply
+		a.Raw(0x81, 0xC1, 0x54, 0x02, 0x00, 0x00);        // add ecx,254h
+		a.Call(OwnerOf);                                  // eax = its clan
+		a.Raw(0x50);                                      // push eax                (f)
+		a.Raw(0x53);                                      // push ebx                (campaign)
+		a.Call(pfFocusFor);
+		a.Mark("apply");
+		a.Raw(0x8B, 0xCD);                                // mov ecx,ebp
+		a.Raw(0x8B, 0x01);                                // mov eax,[ecx]
+		a.Raw(0xFF, 0x50, 0x04);                          // call dword ptr [eax+4]  (replaced: the apply)
+		a.Raw(0x85, 0xDB);                                // test ebx,ebx
+		a.J8(0x74, "out");                                // jz out
+		a.Raw(0x53);                                      // push ebx                (campaign)
+		a.Call(pfRestore);
+		a.Mark("out");
+		a.Raw(0x5D);                                      // pop ebp
+		a.Raw(0x5B);                                      // pop ebx
+		a.Raw(0xC3);                                      // ret
+		a.Resolve();
+		return at;
+	}
+
 	static uint EmitNegotiationLog(Asm a, uint log) {
 		// replaces "call FUN_10692d90" (thiscall(campaign; f1, f2, 1) ret 0Ch) at 10884342 in
 		// CCQ_DIPLOMACY_BEGIN_NEGOTIATION FUN_108842f0
@@ -4336,6 +4397,10 @@ public static class SharedTurnsPatcher {
 		PutJmp(0x105EA330, Sym("PendingPushLog", EmitPendingPushLog(s, log)), 7);
 		ExpectBytes(0x105B60E0, 0x56, 0x8B, 0xF1, 0x57, 0x8B, 0x3E);
 		PutJmp(0x105B60E0, Sym("PendingPopLog", EmitPendingPopLog(s, log)), 6);
+		// Build 0.25: a popup's held order (a member's move or landing after Declare war) is re-checked with the
+		// pathfinder set up for its own clan, not the lead's
+		ExpectBytes(0x105B60F1, 0x8B, 0x07, 0xFF, 0x50, 0x04);
+		PutCall(0x105B60F1, Sym("PopApply", EmitPopApply(s, pfFocusFor, pfRestore)), 5);
 		uint negotiationLog = Sym("NegotiationLog", EmitNegotiationLog(s, log));
 		RedirectCall(0x10884342, 0x10692D90, Sym("NegotiationGate", EmitNegotiationGate(s, groupSlot, foreignPending, negotiationLog, log)));
 		RedirectCall(0x108840E2, 0x107A4BD0, Sym("WarLog", EmitWarLog(s, log)));
@@ -4349,14 +4414,79 @@ public static class SharedTurnsPatcher {
 		ApplyHudFlags(s, log);
 	}
 
+	// ---- route search: a settlement without a map node (build 0.25) -----------------------------------------------
+	// The route searches FUN_107aee80 / FUN_107b0450 / FUN_107b1af0 (one template, three copies) make a node at a
+	// settlement they find next to the route: at the start, and where a sea step meets a node of type 7 ("sail into
+	// an own empty port"). They take that node from FUN_107dfd20(pf; out, &pos, class), which returns a copy of the
+	// no-node record DAT_11ad12d4 (+10h = 0, +19h = 0Ch) when no sub-view grid or cell holds a node of that movement
+	// class there, and look it up in the node map without checking: the hash FUN_107cef40 reads [[rec+10h]+0Ch], the
+	// crash at 107CEF51 after a member's naval landing (NOTES "Naval landing after the move-options popup"). The game's
+	// own start / end checks (FUN_10791bb0) test for the no-node record; these steps never did. Now a no-node result
+	// skips the step as the search's own "already known" path does: the record allocated right before
+	// (FUN_10393ba0(p3, 1Ch, 2)) is freed ([[p3+4]+4004h] -= 20h) and the search goes on where the step ends. Only the
+	// case that crashed changes; the same on every PC. Log only on top (at most NodeGuardMaxLogged per process).
+	const uint NodeAt = 0x107DFD20;            // thiscall(pf; out, &pos, class) ret 0Ch -> eax = out (1Ch-byte node record)
+
+	static uint EmitNodeGuard(Asm a, int arenaOff, uint skipTo, int search, int check, uint log) {
+		// replaces "call FUN_107dfd20" at one of those steps. entry: ecx = pf, [esp+4] out, [esp+8] &pos (x, y: fixed
+		// point, 2^20 per map unit), [esp+0Ch] class; past our return address and the arguments (10h bytes) the search's
+		// frame, its record arena (argument 3) at [esp+arenaOff]. At skipTo (the join after the step) esi is reloaded or
+		// not read, eax / ecx / edx are dead and edi is kept; the three searches never use ebx or ebp.
+		uint at = a.Here;
+		a.Raw(0xFF, 0x74, 0x24, 0x0C);                    // push dword ptr [esp+0Ch] (class)
+		a.Raw(0xFF, 0x74, 0x24, 0x0C);                    // push dword ptr [esp+0Ch] (&pos)
+		a.Raw(0xFF, 0x74, 0x24, 0x0C);                    // push dword ptr [esp+0Ch] (out)
+		a.Call(NodeAt);                                   // eax = out
+		a.Raw(0x83, 0x78, 0x10, 0x00);                    // cmp dword ptr [eax+10h],0 (no node there)
+		a.J8(0x74, "none");                               // je none
+		a.Raw(0xC2, 0x0C, 0x00);                          // ret 0Ch                 (a node: the step as before)
+		a.Mark("none");
+		EmitGroupPtr(a, 2, NodeGuardCountVa);             // edx = &logged
+		a.Raw(0x83, 0x3A, (byte)NodeGuardMaxLogged);      // cmp dword ptr [edx],NodeGuardMaxLogged
+		a.J8(0x73, "free");                               // jae free
+		a.Raw(0xFF, 0x02);                                // inc dword ptr [edx]
+		a.Raw(0x6A, (byte)check);                         // push check              (a2)
+		a.Raw(0x6A, (byte)search);                        // push search             (a1)
+		CallLog(a, log, LogNodeSkipped);
+		a.Raw(0x8B, 0x54, 0x24, 0x08);                    // mov edx,[esp+8]         (&pos)
+		a.Raw(0x8B, 0x42, 0x04);                          // mov eax,[edx+4]         (y)
+		a.Raw(0xC1, 0xF8, 0x14);                          // sar eax,14h             (map units)
+		a.Raw(0x50);                                      // push eax                (a2)
+		a.Raw(0x8B, 0x02);                                // mov eax,[edx]           (x)
+		a.Raw(0xC1, 0xF8, 0x14);                          // sar eax,14h
+		a.Raw(0x50);                                      // push eax                (a1)
+		CallLog(a, log, LogNodeSkippedAt);
+		a.Mark("free");
+		a.Raw(0x83, 0xC4, 0x10);                          // add esp,10h             (return address, arguments: the search's frame)
+		a.Raw(0x8B, 0x84, 0x24); D32(a, arenaOff);        // mov eax,[esp+arenaOff]  (the record arena)
+		a.Raw(0x8B, 0x40, 0x04);                          // mov eax,[eax+4]         (its block)
+		a.Raw(0x83, 0x80, 0x04, 0x40, 0x00, 0x00, 0xE0);  // add dword ptr [eax+4004h],-20h (the record allocated for the step)
+		a.Jmp(skipTo);
+		a.Resolve();
+		return at;
+	}
+
+	static void ApplyNodeGuards(Asm s, uint log) {
+		ReserveDataDword(NodeGuardCountVa);
+		// { search (1..3), the arena's offset in its frame, check (1 start, 2 along the route), call of FUN_107dfd20,
+		// where that step ends }. Frames: FUN_107aee80 sub esp,110h, FUN_107b0450 120h, FUN_107b1af0 104h, each with
+		// esi / edi pushed, so argument 3 sits at 124h / 134h / 118h (as their own frees of a known node read it)
+		var sites = new uint[][] {
+			new uint[] { 1, 0x124, 1, 0x107AF109, 0x107AF16B }, new uint[] { 1, 0x124, 2, 0x107AF941, 0x107AF9C5 },
+			new uint[] { 2, 0x134, 1, 0x107B06C5, 0x107B0727 }, new uint[] { 2, 0x134, 2, 0x107B0EED, 0x107B0F71 },
+			new uint[] { 3, 0x118, 1, 0x107B1CDF, 0x107B1D41 }, new uint[] { 3, 0x118, 2, 0x107B2506, 0x107B258A } };
+		foreach (var x in sites)
+			RedirectCall(x[3], NodeAt, Sym("NodeGuard", EmitNodeGuard(s, (int)x[1], x[4], (int)x[0], (int)x[2], log)));
+	}
+
 	// ---- crash log (every build since 0.23) -------------------------------------------------------------------------
 	// The game writes no crash dump of its own and the 8-player mod's reporter exists only with that mod (and missed the
 	// siege-retreat crash, NOTES "Siege: a member retreats"). At the first campaign of the process (CrashLogReset in
 	// front of both campaign resets) a vectored exception handler, first in the chain, logs exceptions of error
 	// severity (code with both top bits set: access violations, C++ exceptions, ...; not stack overflows: no room to
 	// log then) whose address lies in empire.retail.dll's .text (the 8-player mod's slack included) or this mod's
-	// section: the code, the address, for an access violation the address accessed, and up to 12 return addresses
-	// from the stack, at most CrashMaxExceptions per process. It always passes the exception on (EXCEPTION_CONTINUE_
+	// section: the code, the address, for an access violation the address accessed, and up to CrashStackSlots return
+	// addresses from the stack (CrashStack), at most CrashMaxExceptions per process. It always passes the exception on (EXCEPTION_CONTINUE_
 	// SEARCH), reads nothing of the simulation and writes only the log: it can't change or desync the game. Addresses
 	// inside the DLL are logged at image base 10000000h, in decimal. AddVectoredExceptionHandler through
 	// GetModuleHandleW / GetProcAddress (imported).
@@ -4364,7 +4494,11 @@ public static class SharedTurnsPatcher {
 	                                           // TerminateProcess / ExitProcess (diagnostics build), +10 exceptions logged,
 	                                           // +14 VirtualProtect's old protection (diagnostics build)
 	const uint CrashLogLastDword = CrashLogVa + 0x14;
+	// the route search's missing-node guard (NodeGuard, build 0.25): skipped steps logged so far in this process
+	const uint NodeGuardCountVa = CrashLogLastDword + 4;
+	const int NodeGuardMaxLogged = 20;
 	const int CrashMaxExceptions = 20;
+	const int CrashStackSlots = 48;            // return addresses logged per exception (12 up to build 0.24)
 	const uint GetModuleHandleWIat = 0x115A1100;
 	const uint GetProcAddressIat = 0x115A1190;
 	const uint CrashTextRva = 0x015A1000;      // the game's code: [base+1000h, base+CrashTextRva) (.text and the 8-player
@@ -4395,16 +4529,18 @@ public static class SharedTurnsPatcher {
 	}
 
 	static uint EmitCrashStack(Asm a, uint log) {
-		// stdcall(start, base, id) ret 0Ch, keeps every register: logs (two per line, event id) up to 12 dwords on this
-		// thread's stack from start (at most 400h bytes, never past its base fs:[4]) that look like return addresses:
-		// inside the game's code or this mod's section, at image base 10000000h
+		// stdcall(start, base, id) ret 0Ch, keeps every register: logs (two per line, event id) up to CrashStackSlots
+		// dwords on this thread's stack from start (at most 2000h bytes, never past its base fs:[4]) that look like
+		// return addresses: inside the game's code or this mod's section, right after a call instruction (E8 rel32, or
+		// FF /2 of 2, 3, 4, 6 or 7 bytes), at image base 10000000h. Build 0.25: 48 from 8 KB (12 from 1 KB before, and
+		// without the call test: the naval-landing crash used them up below the route check)
 		uint at = a.Here;
 		a.Raw(0x60);                                      // pushad                  (start +24h, base +28h, id +2Ch)
 		a.Raw(0x8B, 0x74, 0x24, 0x24);                    // mov esi,[esp+24h]       (start)
 		a.Raw(0x8B, 0x6C, 0x24, 0x28);                    // mov ebp,[esp+28h]       (base)
 		a.Raw(0xFC);                                      // cld                     (lodsd forwards)
 		a.Raw(0x64, 0xA1, 0x04, 0x00, 0x00, 0x00);        // mov eax,fs:[4]          (the stack's base)
-		a.Raw(0x8D, 0xBE, 0x00, 0x04, 0x00, 0x00);        // lea edi,[esi+400h]
+		a.Raw(0x8D, 0xBE, 0x00, 0x20, 0x00, 0x00);        // lea edi,[esi+2000h]
 		a.Raw(0x3B, 0xF8);                                // cmp edi,eax
 		a.J8(0x76, "limit");                              // jbe limit
 		a.Raw(0x8B, 0xF8);                                // mov edi,eax
@@ -4413,12 +4549,30 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x33, 0xD2);                                // xor edx,edx             (candidates found)
 		a.Mark("loop");
 		a.Raw(0x3B, 0xF7);                                // cmp esi,edi
-		a.J8(0x73, "flush");                              // jae flush
+		a.J32("flush", 0x0F, 0x83);                       // jae flush
 		a.Raw(0xAD);                                      // lodsd
 		a.Raw(0x8B, 0xC8);                                // mov ecx,eax
 		a.Raw(0x2B, 0xCD);                                // sub ecx,ebp             (offset in the image)
 		EmitCrashInCode(a, "hit", "loop");
 		a.Mark("hit");
+		// eax = the candidate (runtime): only if a call ends right before it (the bytes before an address in the code
+		// are mapped: the image's headers or the previous section)
+		a.Raw(0x52);                                      // push edx
+		a.Raw(0x80, 0x78, 0xFB, 0xE8);                    // cmp byte ptr [eax-5],0E8h (call rel32)
+		a.J8(0x74, "iscall");                             // je iscall
+		foreach (int k in new int[] { 2, 3, 4, 6, 7 }) {
+			a.Raw(0x80, 0x78, (byte)(-k), 0xFF);          // cmp byte ptr [eax-k],0FFh
+			a.J8(0x75, "not" + k);                        // jne notk
+			a.Raw(0x8A, 0x50, (byte)(1 - k));             // mov dl,[eax-k+1]        (its ModR/M)
+			a.Raw(0x80, 0xE2, 0x38);                      // and dl,38h
+			a.Raw(0x80, 0xFA, 0x10);                      // cmp dl,10h              (/2: call)
+			a.J8(0x74, "iscall");                         // je iscall
+			a.Mark("not" + k);
+		}
+		a.Raw(0x5A);                                      // pop edx
+		a.J32("loop", 0xE9);                              // jmp loop                (not a return address)
+		a.Mark("iscall");
+		a.Raw(0x5A);                                      // pop edx
 		a.Raw(0x81, 0xC1); D32(a, ImageBase);             // add ecx,10000000h
 		a.Raw(0x85, 0xDB);                                // test ebx,ebx
 		a.J8(0x75, "pair");                               // jnz pair
@@ -4432,8 +4586,8 @@ public static class SharedTurnsPatcher {
 		a.Raw(0x33, 0xDB);                                // xor ebx,ebx
 		a.Mark("next");
 		a.Raw(0x42);                                      // inc edx
-		a.Raw(0x83, 0xFA, 0x0C);                          // cmp edx,12
-		a.J8(0x72, "loop");                               // jb loop
+		a.Raw(0x83, 0xFA, (byte)CrashStackSlots);         // cmp edx,CrashStackSlots
+		a.J32("loop", 0x0F, 0x82);                        // jb loop
 		a.Mark("flush");
 		a.Raw(0x85, 0xDB);                                // test ebx,ebx
 		a.J8(0x74, "done");                               // jz done
@@ -4986,6 +5140,7 @@ public static class SharedTurnsPatcher {
 		hudDataFixes = new List<DataFix>();
 		uint log = Sym("Log", EmitLog(s));
 		ApplyGroupTurns(s, log);
+		ApplyNodeGuards(s, log);
 		if (!on8p) ApplyDesyncFixes(s, log);   // the 8-player mod has its own at these sites
 		Sym("LogData", s.Here);
 		EmitLogData(s);
